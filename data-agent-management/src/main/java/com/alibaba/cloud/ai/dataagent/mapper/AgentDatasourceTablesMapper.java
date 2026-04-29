@@ -24,6 +24,12 @@ import org.apache.ibatis.annotations.Select;
 import java.util.List;
 
 @Mapper
+/**
+ * AgentDatasourceTablesMapper：MyBatis 数据访问接口。
+ *
+ * 它负责把智能体数据源Tables相关的增删改查动作落到具体 SQL 上，是 Service 层和数据库之间最直接的一层。
+ * 阅读 Mapper 时，最好把方法名、SQL 条件和返回对象类型放在一起理解。
+ */
 public interface AgentDatasourceTablesMapper {
 
 	// 选择当前智能体数据源所有表

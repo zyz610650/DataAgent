@@ -18,6 +18,12 @@ package com.alibaba.cloud.ai.dataagent.enums;
 import lombok.Getter;
 
 @Getter
+/**
+ * SplitterType：枚举定义。
+ *
+ * 它把切分器Type相关的固定取值集中管理，避免状态值散落在各个业务类中硬编码。
+ * 重点关注每个枚举值在参数校验、分支判断和外部协议中的含义。
+ */
 public enum SplitterType {
 
 	TOKEN("token"), RECURSIVE("recursive"), SENTENCE("sentence"), PARAGRAPH("paragraph"), SEMANTIC("semantic");

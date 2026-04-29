@@ -106,6 +106,11 @@ public final class FluxUtil {
 				() -> resultMapper.apply(collectedResult.toString()));
 	}
 
+	/**
+ * `createStreamingGeneratorWithMessages`：创建新的业务对象或新记录。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static Flux<GraphResponse<StreamingOutput>> createStreamingGeneratorWithMessages(
 			Class<? extends NodeAction> nodeClass, OverAllState state,
 			Function<String, Map<String, Object>> resultMapper, Flux<ChatResponse> sourceFlux) {
@@ -149,8 +154,10 @@ public final class FluxUtil {
 	}
 
 	/**
-	 * 从 ChatResponse 中提取 token 用量并累计到 Langfuse Reporter
-	 */
+ * `extractAndAccumulateTokens`：执行当前类对外暴露的一步核心操作。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	private static void extractAndAccumulateTokens(Object threadId, ChatResponse response) {
 		if (threadId == null || response.getMetadata() == null) {
 			return;

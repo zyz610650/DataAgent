@@ -16,11 +16,16 @@
 
 <template>
   <div class="report-html-view-wrapper">
+    <!--
+      使用 iframe 而不是直接把 HTML 挂进当前页面，原因有两个：
+      1. 报告模板可能带有独立样式，放在 iframe 内可避免污染主页面样式。
+      2. 配合 sandbox 可以限制执行能力，降低富文本报告带来的安全风险。
+    -->
     <iframe
       ref="iframeRef"
       class="report-html-iframe"
       sandbox="allow-scripts"
-      title="HTML报告预览"
+      title="HTML 报告预览"
     />
   </div>
 </template>
@@ -29,6 +34,12 @@
   import { defineComponent, ref, watch, nextTick } from 'vue';
   import { buildReportHtml } from './charts/report-html-template';
 
+  /**
+   * HTML 报告预览组件。
+   *
+   * 后端最终生成的报告主体通常是 Markdown 或中间格式文本，
+   * `buildReportHtml(...)` 会把它包进统一的 HTML 模板，再通过 iframe 做隔离预览。
+   */
   export default defineComponent({
     name: 'ReportHtmlView',
     props: {
@@ -40,6 +51,12 @@
     setup(props) {
       const iframeRef = ref<HTMLIFrameElement | null>(null);
 
+      /**
+       * 把当前报告内容加载进 iframe。
+       *
+       * 这里使用 `Blob + URL.createObjectURL(...)` 而不是直接写 `srcdoc`，
+       * 主要是为了让完整 HTML 资源以独立 URL 的方式加载，并在 load 后手动释放 URL。
+       */
       const loadHtml = () => {
         if (!iframeRef.value) return;
 
@@ -62,6 +79,7 @@
         iframe.src = url;
       };
 
+      // 监听 content 变化，确保每次后端返回新报告后都重新渲染预览。
       watch(
         () => props.content,
         () => {

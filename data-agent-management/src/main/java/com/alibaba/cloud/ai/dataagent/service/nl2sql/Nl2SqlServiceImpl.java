@@ -21,8 +21,17 @@ import com.alibaba.cloud.ai.dataagent.dto.prompt.SqlGenerationDTO;
 import com.alibaba.cloud.ai.dataagent.dto.schema.SchemaDTO;
 import com.alibaba.cloud.ai.dataagent.prompt.PromptHelper;
 import com.alibaba.cloud.ai.dataagent.service.llm.LlmService;
-import com.alibaba.cloud.ai.dataagent.util.*;
+import com.alibaba.cloud.ai.dataagent.util.ChatResponseUtil;
+import com.alibaba.cloud.ai.dataagent.util.FluxUtil;
+import com.alibaba.cloud.ai.dataagent.util.JsonParseUtil;
+import com.alibaba.cloud.ai.dataagent.util.JsonUtil;
+import com.alibaba.cloud.ai.dataagent.util.MarkdownParserUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -30,15 +39,25 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
-
 import static com.alibaba.cloud.ai.dataagent.prompt.PromptHelper.buildMixMacSqlDbPrompt;
 import static com.alibaba.cloud.ai.dataagent.prompt.PromptHelper.buildMixSelectorPrompt;
 
+/**
+ * NL2SQL 领域服务实现。
+ *
+ * 这个类专注于“组织 Prompt 并调用 LLM”，主要承担三类任务：
+ * 1. 生成 SQL。
+ * 2. 修复已有 SQL。
+ * 3. 利用 LLM 做 schema 精筛和语义一致性校验。
+ *
+ * 它不负责 HTTP 协议，也不负责工作流路由；
+ * 在系统分层里，它属于纯业务能力层，被 Graph 节点按需调用。
+ *
+ * 关键框架 API：
+ * - {@link Flux}：保留模型流式输出，便于上游继续做流式透传。
+ * - {@link ChatResponse}：Spring AI 对一次模型输出片段的统一抽象。
+ * - {@link TypeReference}：反序列化泛型 JSON 时的标准写法。
+ */
 @Slf4j
 @Service
 @AllArgsConstructor
@@ -48,6 +67,12 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 
 	private final JsonParseUtil jsonParseUtil;
 
+	/**
+	 * 执行语义一致性检查。
+	 *
+	 * 这一步通常发生在 SQL 生成之后、执行之前，用于判断：
+	 * “当前 SQL 虽然语法可能合法，但是否真的符合用户问题和语义模型约束”。
+	 */
 	@Override
 	public Flux<ChatResponse> performSemanticConsistency(SemanticConsistencyDTO semanticConsistencyDTO) {
 		String semanticConsistencyPrompt = PromptHelper.buildSemanticConsistenPrompt(semanticConsistencyDTO);
@@ -55,6 +80,15 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 		return llmService.callUser(semanticConsistencyPrompt);
 	}
 
+	/**
+	 * 生成新 SQL，或修复已有 SQL。
+	 *
+	 * 设计意图：
+	 * - 如果 `sqlGenerationDTO` 里已经带 SQL，说明当前更像是重试/修复场景。
+	 * - 如果没有 SQL，说明是首次生成，走标准 SQL 生成提示词。
+	 *
+	 * 这样拆分能降低模型误判任务目标的概率。
+	 */
 	@Override
 	public Flux<String> generateSql(SqlGenerationDTO sqlGenerationDTO) {
 		String sql = sqlGenerationDTO.getSql();
@@ -63,7 +97,6 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 
 		Flux<String> newSqlFlux;
 		if (sql != null && !sql.isEmpty()) {
-			// Use professional SQL error repair prompt
 			log.debug("Using SQL error fixer for existing SQL: {}", sql);
 			String errorFixerPrompt = PromptHelper.buildSqlErrorFixerPrompt(sqlGenerationDTO);
 			log.debug("SQL error fixer prompt as follows \n {} \n", errorFixerPrompt);
@@ -71,7 +104,6 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 			log.info("SQL error fixing completed");
 		}
 		else {
-			// Normal SQL generation process
 			log.debug("Generating new SQL from scratch");
 			String prompt = PromptHelper.buildNewSqlGeneratorPrompt(sqlGenerationDTO);
 			log.debug("New SQL generator prompt as follows \n {} \n", prompt);
@@ -82,6 +114,13 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 		return newSqlFlux;
 	}
 
+	/**
+	 * 根据“schema 缺失建议”再做一次表级精筛。
+	 *
+	 * 这是一条补偿链路：
+	 * 当 SQL 生成结果提示“当前 schema 还缺某些表信息”时，
+	 * 系统会让模型再从 schema 中补挑一次相关表，尽量减少下次生成时的无关上下文。
+	 */
 	private Flux<ChatResponse> fineSelect(SchemaDTO schemaDTO, String sqlGenerateSchemaMissingAdvice,
 			Consumer<Set<String>> resultConsumer) {
 		log.debug("Fine selecting tables based on advice: {}", sqlGenerateSchemaMissingAdvice);
@@ -99,6 +138,7 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 				String jsonContent = MarkdownParserUtil.extractText(content);
 				List<String> tableList;
 				try {
+					// 模型经常把 JSON 放在 markdown code block 中，先抽文本再做反序列化更稳妥。
 					tableList = JsonUtil.getObjectMapper().readValue(jsonContent, new TypeReference<List<String>>() {
 					});
 				}
@@ -112,6 +152,7 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 						.collect(Collectors.toSet());
 					log.debug("Selected {} tables based on advice: {}", selectedTables.size(), selectedTables);
 					resultConsumer.accept(selectedTables);
+					return;
 				}
 			}
 			log.debug("No tables selected based on advice");
@@ -119,6 +160,16 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 		});
 	}
 
+	/**
+	 * 结合用户问题、证据和可选补充建议，对 schema 做细筛。
+	 *
+	 * 输出方式有两层：
+	 * 1. 返回 `Flux<ChatResponse>`，让上游仍然能看到模型流式输出。
+	 * 2. 通过 `dtoConsumer` 回传筛选后的 `SchemaDTO`，供后续 SQL 生成节点直接使用。
+	 *
+	 * `FluxUtil.cascadeFlux(...)` 可以理解为“第一段流结束后，根据聚合结果再串联第二段流”。
+	 * 这种写法比大量嵌套回调更适合维护复杂的流式编排逻辑。
+	 */
 	@Override
 	public Flux<ChatResponse> fineSelect(SchemaDTO schemaDTO, String query, String evidence,
 			String sqlGenerateSchemaMissingAdvice, DbConfigBO specificDbConfig, Consumer<SchemaDTO> dtoConsumer) {
@@ -148,12 +199,7 @@ public class Nl2SqlServiceImpl implements Nl2SqlService {
 						});
 					}
 					catch (Exception e) {
-						// Some scenarios may prompt exceptions, such as:
-						// java.lang.IllegalStateException:
-						// Please provide database schema information so I can filter
-						// relevant
-						// tables based on your question.
-						// TODO 目前异常接口直接返回500，未返回异常信息，后续优化将异常返回给用户
+						// 这里常见的失败不是 JSON 库问题，而是模型没有按约定输出数组结构。
 						log.error("Failed to parse fine selection response: {}", jsonContent, e);
 						throw new IllegalStateException(jsonContent);
 					}

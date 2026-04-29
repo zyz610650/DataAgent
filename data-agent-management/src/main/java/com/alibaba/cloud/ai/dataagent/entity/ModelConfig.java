@@ -22,6 +22,12 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
+/**
+ * ModelConfig：持久化实体对象。
+ *
+ * 这个类通常和数据库里的模型记录对应，字段设计会直接影响 Mapper SQL 和状态保存方式。
+ * 学习时建议重点看状态字段、时间字段，以及哪些字段会被接口层脱敏或忽略。
+ */
 public class ModelConfig {
 
 	private Integer id;

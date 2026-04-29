@@ -36,7 +36,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-/** Agent Management Controller */
+/**
+ * AgentController：HTTP 接口入口控制器。
+ *
+ * 它负责接收智能体相关请求、整理参数、调用下游 Service，并把结果包装成 REST 或 SSE 响应返回前端。
+ * 学习时重点看接口地址、参数来源、参数校验以及最终委派到哪个 Service。
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/agent")
@@ -46,7 +51,11 @@ public class AgentController {
 
 	private final AgentService agentService;
 
-	/** Get agent list */
+	/**
+ * `list`：读取当前场景所需的数据或状态。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@GetMapping("/list")
 	public List<Agent> list(@RequestParam(value = "status", required = false) String status,
 			@RequestParam(value = "keyword", required = false) String keyword) {
@@ -63,13 +72,21 @@ public class AgentController {
 		return result;
 	}
 
-	/** Get agent details by ID */
+	/**
+ * `get`：读取当前场景所需的数据或状态。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@GetMapping("/{id}")
 	public Agent get(@PathVariable Long id) {
 		return checkAgentExists(id);
 	}
 
-	/** Create agent */
+	/**
+ * `create`：创建新的业务对象或新记录。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@PostMapping
 	public Agent create(@RequestBody Agent agent) {
 		// Set default status
@@ -79,7 +96,11 @@ public class AgentController {
 		return agentService.save(agent);
 	}
 
-	/** Update agent */
+	/**
+ * `update`：更新已有对象的字段、状态或开关配置。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@PutMapping("/{id}")
 	public Agent update(@PathVariable Long id, @RequestBody Agent agent) {
 		checkAgentExists(id);
@@ -87,14 +108,22 @@ public class AgentController {
 		return agentService.save(agent);
 	}
 
-	/** Delete agent */
+	/**
+ * `delete`：删除对象、解绑关系，或清理不再需要的数据。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@DeleteMapping("/{id}")
 	public void delete(@PathVariable Long id) {
 		checkAgentExists(id);
 		agentService.deleteById(id);
 	}
 
-	/** Publish agent */
+	/**
+ * `publish`：向外发布事件、消息或流式结果。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@PostMapping("/{id}/publish")
 	public Agent publish(@PathVariable Long id) {
 		Agent agent = checkAgentExists(id);
@@ -102,7 +131,11 @@ public class AgentController {
 		return agentService.save(agent);
 	}
 
-	/** Offline agent */
+	/**
+ * `offline`：执行当前类对外暴露的一步核心操作。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@PostMapping("/{id}/offline")
 	public Agent offline(@PathVariable Long id) {
 		Agent agent = checkAgentExists(id);
@@ -110,7 +143,11 @@ public class AgentController {
 		return agentService.save(agent);
 	}
 
-	/** Get masked API Key status */
+	/**
+ * `getApiKey`：读取当前场景所需的数据或状态。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@GetMapping("/{id}/api-key")
 	public ApiResponse<ApiKeyResponse> getApiKey(@PathVariable Long id) {
 		Agent agent = checkAgentExists(id);
@@ -118,7 +155,11 @@ public class AgentController {
 		return buildApiKeyResponse(masked, agent.getApiKeyEnabled(), "获取 API Key 成功");
 	}
 
-	/** Generate API Key */
+	/**
+ * `generateApiKey`：生成、重写或召回当前阶段需要的内容。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@PostMapping("/{id}/api-key/generate")
 	public ApiResponse<ApiKeyResponse> generateApiKey(@PathVariable Long id) {
 		checkAgentExists(id);
@@ -126,7 +167,11 @@ public class AgentController {
 		return buildApiKeyResponse(agent.getApiKey(), agent.getApiKeyEnabled(), "生成 API Key 成功");
 	}
 
-	/** Reset API Key */
+	/**
+ * `resetApiKey`：执行当前类对外暴露的一步核心操作。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@PostMapping("/{id}/api-key/reset")
 	public ApiResponse<ApiKeyResponse> resetApiKey(@PathVariable Long id) {
 		checkAgentExists(id);
@@ -134,7 +179,11 @@ public class AgentController {
 		return buildApiKeyResponse(agent.getApiKey(), agent.getApiKeyEnabled(), "重置 API Key 成功");
 	}
 
-	/** Delete API Key */
+	/**
+ * `deleteApiKey`：删除对象、解绑关系，或清理不再需要的数据。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@DeleteMapping("/{id}/api-key")
 	public ApiResponse<ApiKeyResponse> deleteApiKey(@PathVariable Long id) {
 		checkAgentExists(id);
@@ -142,7 +191,11 @@ public class AgentController {
 		return buildApiKeyResponse(agent.getApiKey(), agent.getApiKeyEnabled(), "删除 API Key 成功");
 	}
 
-	/** Toggle API Key enable flag */
+	/**
+ * `toggleApiKey`：更新已有对象的字段、状态或开关配置。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体相关结果。
+ */
 	@PostMapping("/{id}/api-key/enable")
 	public ApiResponse<ApiKeyResponse> toggleApiKey(@PathVariable Long id, @RequestParam("enabled") boolean enabled) {
 		checkAgentExists(id);

@@ -26,19 +26,35 @@ import com.alibaba.cloud.ai.dataagent.vo.ApiResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
-import java.util.Map;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Chat Controller
+ * 会话与消息管理接口。
+ *
+ * 这个 Controller 负责“聊天外围能力”，和 `GraphController` 的职责边界不同：
+ * - `GraphController` 负责实时分析与流式执行。
+ * - 当前类负责会话、消息、标题、报告下载等持久化管理能力。
+ *
+ * 推荐阅读这个类的原因：
+ * 1. 它能帮助你快速理解系统有哪些“分析之外”的配套数据模型。
+ * 2. 它展示了前端如何围绕一次分析任务组织会话生命周期。
  */
 @Slf4j
 @RestController
@@ -56,7 +72,11 @@ public class ChatController {
 	private final ReportTemplateUtil reportTemplateUtil;
 
 	/**
-	 * Get session list for an agent
+	 * 查询某个 Agent 的全部会话。
+	 *
+	 * 框架 API 说明：
+	 * - `@PathVariable` 把 URL 中的 `{id}` 绑定为方法参数。
+	 * - `ResponseEntity.ok(...)` 是 Spring 构造 200 响应的常见写法，后续也方便附加 Header。
 	 */
 	@GetMapping("/agent/{id}/sessions")
 	public ResponseEntity<List<ChatSession>> getAgentSessions(@PathVariable(value = "id") Integer id) {
@@ -65,7 +85,10 @@ public class ChatController {
 	}
 
 	/**
-	 * Create a new session
+	 * 创建一个新会话。
+	 *
+	 * 这里允许请求体为空，表示前端可以只传 Agent ID，由后端补默认值。
+	 * 这类设计常见于“用户进入页面后先快速落一个空会话，再逐步填充内容”的场景。
 	 */
 	@PostMapping("/agent/{id}/sessions")
 	public ResponseEntity<ChatSession> createSession(@PathVariable(value = "id") Integer id,
@@ -78,7 +101,7 @@ public class ChatController {
 	}
 
 	/**
-	 * Clear all sessions for an agent
+	 * 清空某个 Agent 下的全部会话。
 	 */
 	@DeleteMapping("/agent/{id}/sessions")
 	public ResponseEntity<ApiResponse> clearAgentSessions(@PathVariable(value = "id") Integer id) {
@@ -87,7 +110,7 @@ public class ChatController {
 	}
 
 	/**
-	 * Get message list for a session
+	 * 查询单个会话的消息列表。
 	 */
 	@GetMapping("/sessions/{sessionId}/messages")
 	public ResponseEntity<List<ChatMessage>> getSessionMessages(@PathVariable(value = "sessionId") String sessionId) {
@@ -96,7 +119,11 @@ public class ChatController {
 	}
 
 	/**
-	 * Save message to session
+	 * 保存一条消息到指定会话。
+	 *
+	 * 除了落库消息本身，这里还会做两个附带动作：
+	 * 1. 更新会话最近活跃时间，便于前端按最近对话排序。
+	 * 2. 当请求标记 `titleNeeded=true` 时，异步触发标题生成。
 	 */
 	@PostMapping("/sessions/{sessionId}/messages")
 	public ResponseEntity<ChatMessage> saveMessage(@PathVariable(value = "sessionId") String sessionId,
@@ -115,7 +142,6 @@ public class ChatController {
 
 			ChatMessage savedMessage = chatMessageService.saveMessage(message);
 
-			// Update session activity time
 			chatSessionService.updateSessionTime(sessionId);
 
 			if (request.isTitleNeeded()) {
@@ -131,7 +157,7 @@ public class ChatController {
 	}
 
 	/**
-	 * 置顶/取消置顶会话
+	 * 置顶或取消置顶会话。
 	 */
 	@PutMapping("/sessions/{sessionId}/pin")
 	public ResponseEntity<ApiResponse> pinSession(@PathVariable(value = "sessionId") String sessionId,
@@ -148,7 +174,10 @@ public class ChatController {
 	}
 
 	/**
-	 * Rename session
+	 * 重命名会话。
+	 *
+	 * `StringUtils.hasText(...)` 是 Spring 常用字符串工具，
+	 * 比单纯判断 `null` 更严格，会把空串和全空白串都视为无效输入。
 	 */
 	@PutMapping("/sessions/{sessionId}/rename")
 	public ResponseEntity<ApiResponse> renameSession(@PathVariable(value = "sessionId") String sessionId,
@@ -168,7 +197,7 @@ public class ChatController {
 	}
 
 	/**
-	 * Delete a single session
+	 * 删除单个会话。
 	 */
 	@DeleteMapping("/sessions/{sessionId}")
 	public ResponseEntity<ApiResponse> deleteSession(@PathVariable(value = "sessionId") String sessionId) {
@@ -183,7 +212,13 @@ public class ChatController {
 	}
 
 	/**
-	 * Download HTML report
+	 * 下载 HTML 报告。
+	 *
+	 * 这个接口不负责“生成报告内容”，只负责把已有内容包装成完整 HTML 并作为附件下载。
+	 *
+	 * 关键框架 API：
+	 * - `ResponseEntity<byte[]>`：适合返回文件下载这类二进制响应。
+	 * - `Content-Disposition: attachment`：告诉浏览器这是下载附件而不是普通页面。
 	 */
 	@PostMapping("/sessions/{sessionId}/reports/html")
 	public ResponseEntity<byte[]> convertAndDownloadHtml(@PathVariable(value = "sessionId") String sessionId,

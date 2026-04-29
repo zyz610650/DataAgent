@@ -15,6 +15,12 @@
  */
 package com.alibaba.cloud.ai.dataagent.exception;
 
+/**
+ * InternalServerException：自定义业务异常。
+ *
+ * 它用来表达InternalServer相关的可预期失败场景，方便统一做错误码映射和接口返回。
+ * 重点看它由谁抛出、由谁捕获，以及最终如何反馈给调用方。
+ */
 public class InternalServerException extends RuntimeException {
 
 	public InternalServerException(String message) {

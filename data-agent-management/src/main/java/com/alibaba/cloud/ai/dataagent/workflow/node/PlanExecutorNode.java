@@ -15,41 +15,71 @@
  */
 package com.alibaba.cloud.ai.dataagent.workflow.node;
 
-import com.alibaba.cloud.ai.graph.OverAllState;
-import com.alibaba.cloud.ai.graph.StateGraph;
-import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.dataagent.dto.planner.ExecutionStep;
 import com.alibaba.cloud.ai.dataagent.dto.planner.Plan;
 import com.alibaba.cloud.ai.dataagent.util.PlanProcessUtil;
 import com.alibaba.cloud.ai.dataagent.util.StateUtil;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.StateGraph;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.HUMAN_FEEDBACK_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.HUMAN_REVIEW_ENABLED;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.IS_ONLY_NL2SQL;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PLAN_CURRENT_STEP;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PLAN_NEXT_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PLAN_REPAIR_COUNT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PLAN_VALIDATION_ERROR;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PLAN_VALIDATION_STATUS;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PYTHON_GENERATE_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.REPORT_GENERATOR_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_GENERATE_NODE;
 
 /**
- * Plan execution and validation node, decides next execution node based on plan, and
- * validates before execution.
+ * 计划执行节点。
  *
- * @author zhangshenghang
+ * 这个节点本身不执行 SQL、Python 或报告生成，它只负责解释 Planner 产出的执行计划，并决定当前这一步应该跳到哪个执行节点。
+ *
+ * 可以把它理解为“计划运行时的总调度入口”：
+ * - 先验证 Planner 生成的 JSON 计划是否合规。
+ * - 再根据当前步数拿到要执行的 `ExecutionStep`。
+ * - 最后把下一跳节点名写回状态，交给 Dispatcher 或 Graph 继续调度。
+ *
+ * 为什么要有这一层：
+ * - Planner 负责“想怎么做”。
+ * - PlanExecutorNode 负责“按什么顺序真正落地执行”。
+ * - 这样规划和执行可以解耦，后续插入人工审核、失败修复也更容易。
  */
 @Slf4j
 @Component
 public class PlanExecutorNode implements NodeAction {
 
-	// Supported node types
+	/**
+	 * 当前执行器允许直接跳转到的业务节点。
+	 *
+	 * 注意这是“可执行节点白名单”，用于保护系统不因为 Planner 输出异常节点名而跳到未知流程。
+	 */
 	private static final Set<String> SUPPORTED_NODES = Set.of(SQL_GENERATE_NODE, PYTHON_GENERATE_NODE,
 			REPORT_GENERATOR_NODE);
 
+	/**
+	 * 执行计划校验与下一跳选择。
+	 *
+	 * 返回的状态主要有三类：
+	 * - `PLAN_VALIDATION_STATUS`：计划是否通过校验。
+	 * - `PLAN_NEXT_NODE`：通过校验后应该执行的下一个节点名。
+	 * - `PLAN_CURRENT_STEP`：当计划执行完或推进后，需要更新的当前步号。
+	 */
 	@Override
 	public Map<String, Object> apply(OverAllState state) throws Exception {
-		// TODO 待优化，校验应该在生成计划之后而不是这里，这里导致每次运行一个计划都校验一次
-		// 1. Validate the Plan
+		// 当前实现是在“计划执行前”做校验，因此每次进入执行器都会重新检查一次计划。
+		// 这不是最省成本的方案，但可以保证执行时拿到的是一份结构完整的计划。
 		Plan plan;
 		try {
 			plan = PlanProcessUtil.getPlan(state);
@@ -60,13 +90,11 @@ public class PlanExecutorNode implements NodeAction {
 					"Validation failed: The plan is not a valid JSON structure. Error: " + e.getMessage());
 		}
 
-		// Validate execution plan structure
 		if (!validateExecutionPlanStructure(plan)) {
 			return buildValidationResult(state, false,
 					"Validation failed: The generated plan is empty or has no execution steps.");
 		}
 
-		// Validate each execution step
 		for (ExecutionStep step : plan.getExecutionPlan()) {
 			String validationResult = validateExecutionStep(step);
 			if (validationResult != null) {
@@ -75,7 +103,8 @@ public class PlanExecutorNode implements NodeAction {
 		}
 
 		log.info("Plan validation successful.");
-		// 2. If开启人工复核，则在执行前暂停，跳转到human_feedback节点
+
+		// 如果开启人工复核，则在真正执行计划前先跳到人工反馈节点暂停。
 		Boolean humanReviewEnabled = state.value(HUMAN_REVIEW_ENABLED, false);
 		if (Boolean.TRUE.equals(humanReviewEnabled)) {
 			log.info("Human review enabled: routing to human_feedback node");
@@ -84,25 +113,24 @@ public class PlanExecutorNode implements NodeAction {
 
 		int currentStep = PlanProcessUtil.getCurrentStepNumber(state);
 		List<ExecutionStep> executionPlan = plan.getExecutionPlan();
-
 		boolean isOnlyNl2Sql = state.value(IS_ONLY_NL2SQL, false);
 
-		// Check if the plan is completed
+		// 当前步号大于计划总步数，说明计划已经跑完。
 		if (currentStep > executionPlan.size()) {
 			log.info("Plan completed, current step: {}, total steps: {}", currentStep, executionPlan.size());
 			return Map.of(PLAN_CURRENT_STEP, 1, PLAN_NEXT_NODE, isOnlyNl2Sql ? StateGraph.END : REPORT_GENERATOR_NODE,
 					PLAN_VALIDATION_STATUS, true);
 		}
 
-		// Get current step and determine next node
 		ExecutionStep executionStep = executionPlan.get(currentStep - 1);
 		String toolToUse = executionStep.getToolToUse();
-
 		return determineNextNode(toolToUse);
 	}
 
 	/**
-	 * Determine the next node to execute
+	 * 根据当前步骤声明的工具类型选择下一跳节点。
+	 *
+	 * `toolToUse` 本质上就是 Planner 产出的“执行节点名”，这里会在白名单内做一次检查后再放行。
 	 */
 	private Map<String, Object> determineNextNode(String toolToUse) {
 		if (SUPPORTED_NODES.contains(toolToUse)) {
@@ -114,36 +142,41 @@ public class PlanExecutorNode implements NodeAction {
 			return Map.of(PLAN_NEXT_NODE, toolToUse, PLAN_VALIDATION_STATUS, true);
 		}
 		else {
-			// This case should ideally not be reached if validation is done correctly
-			// before.
 			return Map.of(PLAN_VALIDATION_STATUS, false, PLAN_VALIDATION_ERROR, "Unsupported node type: " + toolToUse);
 		}
 	}
 
 	/**
-	 * Validate the execution plan structure
-	 */
+ * `validateExecutionPlanStructure`：校验输入、配置或运行结果是否满足要求。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private boolean validateExecutionPlanStructure(Plan plan) {
 		return plan != null && plan.getExecutionPlan() != null && !plan.getExecutionPlan().isEmpty();
 	}
 
 	/**
-	 * Validate a single execution step
-	 * @return error message if validation fails, null if validation passes
+	 * 验证单个执行步骤是否合法。
+	 *
+	 * 校验内容包括：
+	 * - 工具类型是否在允许范围内。
+	 * - 工具参数是否存在。
+	 * - 不同节点要求的关键字段是否齐全。
+	 *
+	 * 返回值约定：
+	 * - `null` 表示通过校验。
+	 * - 非空字符串表示失败原因。
 	 */
 	private String validateExecutionStep(ExecutionStep step) {
-		// Validate tool name
 		if (step.getToolToUse() == null || !SUPPORTED_NODES.contains(step.getToolToUse())) {
 			return "Validation failed: Plan contains an invalid tool name: '" + step.getToolToUse() + "' in step "
 					+ step.getStep();
 		}
 
-		// Validate tool parameters
 		if (step.getToolParameters() == null) {
 			return "Validation failed: Tool parameters are missing for step " + step.getStep();
 		}
 
-		// Validate specific parameters based on node type
 		switch (step.getToolToUse()) {
 			case SQL_GENERATE_NODE:
 				if (!StringUtils.hasText(step.getToolParameters().getInstruction())) {
@@ -165,19 +198,23 @@ public class PlanExecutorNode implements NodeAction {
 				break;
 
 			default:
-				// This should not happen due to the earlier validation
 				break;
 		}
 
-		return null; // Validation passed
+		return null;
 	}
 
+	/**
+	 * 统一构造计划校验结果。
+	 *
+	 * 当校验失败时，这里顺便累加 `PLAN_REPAIR_COUNT`，
+	 * 方便下游 Dispatcher 判断是否需要回到 Planner 进行修复。
+	 */
 	private Map<String, Object> buildValidationResult(OverAllState state, boolean isValid, String errorMessage) {
 		if (isValid) {
 			return Map.of(PLAN_VALIDATION_STATUS, true);
 		}
 		else {
-			// When validation fails, increment the repair count here.
 			int repairCount = StateUtil.getObjectValue(state, PLAN_REPAIR_COUNT, Integer.class, 0);
 			return Map.of(PLAN_VALIDATION_STATUS, false, PLAN_VALIDATION_ERROR, errorMessage, PLAN_REPAIR_COUNT,
 					repairCount + 1);

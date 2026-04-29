@@ -410,6 +410,24 @@
     }
   }
 
+  /**
+   * 智能体运行页。
+   *
+   * 这是前端最核心的业务组件，承担了整条“用户提问 -> 流式接收后端节点输出 -> 渲染结果 -> 处理人工反馈”的页面编排。
+   * 如果把后端的 `GraphController + GraphServiceImpl` 看成运行链路的服务端入口，
+   * 那么这里就是对应的前端总控台。
+   *
+   * 这个组件同时做了四类事情：
+   * 1. 会话切换与消息历史展示
+   * 2. SSE 流式请求发起与停止
+   * 3. 多种结果类型渲染，例如文本、结果集、Markdown 报告、HTML 报告
+   * 4. human-in-the-loop 交互，也就是计划审批和人工反馈续跑
+   *
+   * 阅读建议：
+   * 1. 先看 `setup()` 里有哪些响应式状态。
+   * 2. 再看 `sendMessage()`、`handleHumanFeedback()`、`stopStreaming()` 三个关键动作。
+   * 3. 最后回头看模板，理解这些状态如何映射成不同 UI 区块。
+   */
   export default defineComponent({
     name: 'AgentRun',
     components: {
@@ -429,6 +447,14 @@
       ReportHtmlView,
       ResultSetDisplay,
     },
+    /**
+     * `created()` 里注册了挂到 `window` 上的辅助方法。
+     *
+     * 这么做并不是最现代的方式，但对当前场景有实际价值：
+     * - 某些消息内容是以 `v-html` 方式插入的静态 HTML 片段。
+     * - 这些片段内部的按钮无法直接绑定 Vue 模板事件。
+     * - 因此需要暴露全局函数给生成后的 HTML 内联调用。
+     */
     created() {
       window.copyTextToClipboard = btn => {
         const text = btn.previousElementSibling.textContent;
@@ -488,6 +514,12 @@
         nextBtn.disabled = currentPage === totalPages;
       };
     },
+    /**
+     * 组件主逻辑入口。
+     *
+     * Vue 3 Composition API 下，`setup()` 相当于把页面的状态、方法和生命周期拼装在一起。
+     * 这个组件的复杂度主要就集中在这里。
+     */
     setup() {
       const route = useRoute();
 
@@ -579,6 +611,12 @@
         }
       };
 
+      /**
+       * 发送用户消息并启动一轮新的流式分析。
+       *
+       * 这是运行页最核心的用户动作。
+       * 它不仅会保存用户消息，还会创建/复用会话、注册 SSE 回调、维护运行态，并把节点输出逐步写回页面。
+       */
       const sendMessage = async () => {
         if (!userInput.value.trim()) {
           ElMessage.warning('请输入请求消息！');
@@ -1128,6 +1166,12 @@
         });
       };
 
+      /**
+       * 处理人工反馈。
+       *
+       * 当前页面在收到后端“等待人工反馈”状态后，会把上一轮请求参数和 threadId 保留下来。
+       * 用户在这里给出批准/拒绝及反馈内容后，会沿用同一个 thread 再次请求后端，让工作流从暂停点继续。
+       */
       const handleHumanFeedback = async (
         request: GraphRequest,
         rejectedPlan: boolean,
@@ -1168,6 +1212,12 @@
       };
 
       // 停止流式响应
+      /**
+       * 主动停止当前流式会话。
+       *
+       * 这一步不只是关闭前端连接，还要把当前已经收到但尚未落库的节点内容补存到消息历史里，
+       * 否则用户中途停止后，再次进入会话会看到消息历史不完整。
+       */
       const stopStreaming = async () => {
         if (!currentSession.value) {
           ElMessage.warning('当前没有活动的会话');
@@ -1340,6 +1390,12 @@
       };
 
       // 生命周期
+      /**
+       * 页面初次挂载时加载当前智能体信息。
+       *
+       * `onMounted(...)` 对应 Vue Composition API 生命周期钩子，
+       * 时机是在组件首次渲染到 DOM 后，适合发起初始化请求。
+       */
       onMounted(async () => {
         await loadAgent();
       });

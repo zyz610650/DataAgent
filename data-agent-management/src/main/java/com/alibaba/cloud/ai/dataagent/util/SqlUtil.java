@@ -19,12 +19,11 @@ import com.alibaba.cloud.ai.dataagent.enums.BizDataSourceTypeEnum;
 import lombok.experimental.UtilityClass;
 
 /**
- * SQL 工具类
+ * SqlUtil：通用工具类。
  *
- * @author Yang Yufeng
- * @version 1.0
+ * 它沉淀的是SQL相关的公共处理逻辑，避免同一段代码在多个业务类里重复出现。
+ * 学习时不要只看方法名，更要看输入格式、边界处理和返回结果约定。
  */
-@UtilityClass
 public class SqlUtil {
 
 	/**

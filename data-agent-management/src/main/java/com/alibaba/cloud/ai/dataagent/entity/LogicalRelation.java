@@ -25,12 +25,11 @@ import org.springframework.format.annotation.DateTimeFormat;
 import java.time.LocalDateTime;
 
 /**
- * 逻辑外键配置实体类 用于定义数据源中表之间的逻辑外键关系，帮助 LLM 理解数据关联
+ * LogicalRelation：持久化实体对象。
+ *
+ * 这个类通常和数据库里的逻辑关联记录对应，字段设计会直接影响 Mapper SQL 和状态保存方式。
+ * 学习时建议重点看状态字段、时间字段，以及哪些字段会被接口层脱敏或忽略。
  */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class LogicalRelation {
 
 	/**

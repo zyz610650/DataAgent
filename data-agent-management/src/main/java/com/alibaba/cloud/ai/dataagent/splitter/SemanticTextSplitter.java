@@ -52,8 +52,10 @@ public class SemanticTextSplitter extends TextSplitter {
 	private int embeddingBatchSize = 10;
 
 	/**
-	 * 句子正则：匹配标点或换行
-	 */
+ * `compile`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private static final Pattern SENTENCE_PATTERN = Pattern.compile("([^。！？；.!?;\\n]+[。！？；.!?;]?|[^。！？；.!?;\\n]*\\n)");
 
 	@Override
@@ -85,8 +87,10 @@ public class SemanticTextSplitter extends TextSplitter {
 	}
 
 	/**
-	 * 核心逻辑：合并句子
-	 */
+ * `combineSentences`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private List<String> combineSentences(List<String> sentences, List<float[]> embeddings) {
 		List<String> chunks = new ArrayList<>();
 		StringBuilder currentChunk = new StringBuilder();
@@ -158,8 +162,10 @@ public class SemanticTextSplitter extends TextSplitter {
 	}
 
 	/**
-	 * 提取句子
-	 */
+ * `extractSentences`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private List<String> extractSentences(String text) {
 		List<String> sentences = new ArrayList<>();
 		Matcher matcher = SENTENCE_PATTERN.matcher(text);
@@ -202,8 +208,10 @@ public class SemanticTextSplitter extends TextSplitter {
 	}
 
 	/**
-	 * 批量 Embedding (带容错)
-	 */
+ * `batchEmbed`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private List<float[]> batchEmbed(List<String> texts) {
 		// 获取向量维度的占位符
 		int dimensions = embeddingModel.dimensions();
@@ -245,8 +253,10 @@ public class SemanticTextSplitter extends TextSplitter {
 	}
 
 	/**
-	 * 保底策略：如果单个句子本身就超长，还是得硬切
-	 */
+ * `splitLargeChunk`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private List<String> splitLargeChunk(String text) {
 		List<String> result = new ArrayList<>();
 		for (int i = 0; i < text.length(); i += maxChunkSize) {

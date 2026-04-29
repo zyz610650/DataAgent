@@ -22,13 +22,35 @@ import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-// TODO 2025/12/08 合并包后移动到DataAgentConfiguration  中
+/**
+ * MCP Server 工具装配配置。
+ *
+ * 这个类负责把 `McpServerService` 暴露为 Spring AI 可识别的工具集合。
+ * 之所以单独拆一个配置类，是因为这里牵涉到“工具扫描时机”和“模型初始化时机”的顺序问题。
+ *
+ * 关键框架 API：
+ * - {@link ToolCallbackProvider}：
+ *   Spring AI 的工具提供者抽象，模型在推理过程中如果要调用外部工具，最终会落到这里暴露的回调。
+ * - {@link MethodToolCallbackProvider}：
+ *   它会扫描传入对象的方法，并把它们包装成可被大模型调用的工具定义。
+ *
+ * 设计要点：
+ * - 本项目用自定义注解 `@McpServerTool` 标记这类工具 Bean。
+ * - 这样可以避免某些 ChatModel Starter 在初始化阶段过早扫描工具，从而引入循环依赖。
+ */
 @Configuration
 public class McpServerConfig {
 
-	// McpServerTool自定义注解 是为了解决如下场景：
-	// ChatClient初始化依赖 chatModel，而如dashscopeChatModel等通过starter装配的ChatModel初始化会
-	// 立马扫描tool了，但是我们的tool功能需要依赖LLM（比如NL2SQL），所以间接依赖了chatClient，循环依赖。
+	/**
+	 * 把 `McpServerService` 的公开方法注册为工具回调。
+	 *
+	 * 为什么要这样做：
+	 * 1. MCP 暴露给外部调用的能力，本质上还是普通 Java 方法。
+	 * 2. `MethodToolCallbackProvider` 会把这些方法转换成 LLM 可理解的 Tool 定义。
+	 * 3. Graph 或 Chat 流程中如果触发工具调用，Spring AI 就能从解析链中找到这些工具。
+	 *
+	 * 对阅读者来说，这个 Bean 可以理解为“Java 服务方法 -> 大模型工具协议”的桥接器。
+	 */
 	@Bean
 	@McpServerTool
 	public ToolCallbackProvider mcpServerTools(McpServerService mcpServerService) {

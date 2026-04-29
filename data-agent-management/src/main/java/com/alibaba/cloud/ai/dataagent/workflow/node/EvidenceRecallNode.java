@@ -16,19 +16,27 @@
 package com.alibaba.cloud.ai.dataagent.workflow.node;
 
 import com.alibaba.cloud.ai.dataagent.constant.DocumentMetadataConstant;
-import com.alibaba.cloud.ai.dataagent.enums.KnowledgeType;
-import com.alibaba.cloud.ai.dataagent.enums.TextType;
 import com.alibaba.cloud.ai.dataagent.dto.prompt.EvidenceQueryRewriteDTO;
 import com.alibaba.cloud.ai.dataagent.entity.AgentKnowledge;
+import com.alibaba.cloud.ai.dataagent.enums.KnowledgeType;
+import com.alibaba.cloud.ai.dataagent.enums.TextType;
 import com.alibaba.cloud.ai.dataagent.mapper.AgentKnowledgeMapper;
 import com.alibaba.cloud.ai.dataagent.prompt.PromptHelper;
 import com.alibaba.cloud.ai.dataagent.service.llm.LlmService;
 import com.alibaba.cloud.ai.dataagent.service.vectorstore.AgentVectorStoreService;
-import com.alibaba.cloud.ai.dataagent.util.*;
+import com.alibaba.cloud.ai.dataagent.util.ChatResponseUtil;
+import com.alibaba.cloud.ai.dataagent.util.FluxUtil;
+import com.alibaba.cloud.ai.dataagent.util.JsonParseUtil;
+import com.alibaba.cloud.ai.dataagent.util.MarkdownParserUtil;
+import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.GraphResponse;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -38,13 +46,23 @@ import org.springframework.util.Assert;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.AGENT_ID;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.EVIDENCE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.INPUT_KEY;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.MULTI_TURN_CONTEXT;
 
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
-
+/**
+ * 证据召回节点。
+ *
+ * 它承担的任务不是直接召回数据库 Schema，而是先围绕“业务语义证据”做补充检索。
+ * 这里的证据主要来自两类知识：
+ * - 业务术语知识：例如 PV、GMV、核心用户等业务定义。
+ * - 智能体知识库：例如 FAQ、QA、文档片段等。
+ *
+ * 设计动机：
+ * - 用户自然语言里常常有大量隐式业务语义，仅靠数据库表结构无法完整理解。
+ * - 先把业务语义补齐，后续 QueryEnhance、SchemaRecall、SQL 生成才更有上下文。
+ */
 @Slf4j
 @Component
 @AllArgsConstructor
@@ -58,10 +76,19 @@ public class EvidenceRecallNode implements NodeAction {
 
 	private final AgentKnowledgeMapper agentKnowledgeMapper;
 
+	/**
+	 * 执行证据召回。
+	 *
+	 * 处理流程分两段：
+	 * 1. 先让模型把当前问题重写成更适合检索知识库的 standalone query。
+	 * 2. 再用这个 query 去向量库召回业务术语和智能体知识，并格式化成统一证据文本。
+	 *
+	 * 返回值采用“双流拼接”的方式：
+	 * - 第一段流展示查询重写过程。
+	 * - 第二段流展示证据召回结果摘要。
+	 */
 	@Override
 	public Map<String, Object> apply(OverAllState state) throws Exception {
-
-		// 从state中提取question和agentId
 		String question = StateUtil.getStringValue(state, INPUT_KEY);
 		String agentId = StateUtil.getStringValue(state, AGENT_ID);
 		Assert.hasText(agentId, "Agent ID cannot be empty.");
@@ -71,64 +98,63 @@ public class EvidenceRecallNode implements NodeAction {
 
 		String multiTurn = StateUtil.getStringValue(state, MULTI_TURN_CONTEXT, "(无)");
 
-		// 构建查询重写提示
-		// 不需要扩展为多个子查询，因为此时LLM不能理解不同公司的个性化业务知识，比如 PV,KMV等专业名词，扩展反而引入噪音。
+		// 注意这里不把问题扩写成多个子问题，而是只生成一个更适合知识检索的 standalone query。
+		// 原因是业务知识往往有强上下文，盲目拆问题反而容易引入噪声。
 		String prompt = PromptHelper.buildEvidenceQueryRewritePrompt(multiTurn, question);
 		log.debug("Built evidence-query-rewrite prompt as follows \n {} \n", prompt);
 
-		// 调用LLM进行查询重写
 		Flux<ChatResponse> responseFlux = llmService.callUser(prompt);
 		Sinks.Many<String> evidenceDisplaySink = Sinks.many().multicast().onBackpressureBuffer();
 
 		final Map<String, Object> resultMap = new HashMap<>();
 		Flux<GraphResponse<StreamingOutput>> generator = FluxUtil.createStreamingGenerator(this.getClass(), state,
 				responseFlux,
-				Flux.just(ChatResponseUtil.createResponse("正在查询重写以更好召回evidence..."),
+				Flux.just(ChatResponseUtil.createResponse("正在查询重写，以更好召回 Evidence..."),
 						ChatResponseUtil.createPureResponse(TextType.JSON.getStartSign())),
 				Flux.just(ChatResponseUtil.createPureResponse(TextType.JSON.getEndSign()),
-						ChatResponseUtil.createResponse("\n查询重写完成！")),
+						ChatResponseUtil.createResponse("\n查询重写完成。")),
 				result -> {
 					resultMap.putAll(getEvidences(result, agentId, evidenceDisplaySink));
 					return resultMap;
 				});
 
+		// 第二段流只负责把证据摘要往前端输出；真正的业务结果仍然复用第一段已构造好的 resultMap。
 		Flux<GraphResponse<StreamingOutput>> evidenceFlux = FluxUtil.createStreamingGenerator(this.getClass(), state,
 				evidenceDisplaySink.asFlux().map(ChatResponseUtil::createPureResponse), Flux.empty(), Flux.empty(),
 				result -> resultMap);
 		return Map.of(EVIDENCE, generator.concatWith(evidenceFlux));
 	}
 
+	/**
+ * `getEvidences`：读取当前场景所需的数据或状态。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private Map<String, Object> getEvidences(String llmOutput, String agentId, Sinks.Many<String> sink) {
 		try {
 			String standaloneQuery = extractStandaloneQuery(llmOutput);
 
-			if (null == standaloneQuery || standaloneQuery.isEmpty()) {
+			if (standaloneQuery == null || standaloneQuery.isEmpty()) {
 				log.debug("No standalone query from LLM output");
-				sink.tryEmitNext("未能进行查询重写！\n");
+				sink.tryEmitNext("未能进行查询重写。\n");
 				return Map.of(EVIDENCE, "无");
 			}
 
-			// 输出重写后的查询
 			outputRewrittenQuery(standaloneQuery, sink);
 
-			// 获取业务知识和智能体知识文档
 			DocumentRetrievalResult retrievalResult = retrieveDocuments(agentId, standaloneQuery);
 
-			// 检查是否有证据文档
 			if (retrievalResult.allDocuments().isEmpty()) {
 				log.debug("No evidence documents found for agent: {} with query: {}", agentId, standaloneQuery);
-				sink.tryEmitNext("未找到证据！\n");
+				sink.tryEmitNext("未找到证据。\n");
 				return Map.of(EVIDENCE, "无");
 			}
 
-			// 构建证据内容
 			String evidence = buildFormattedEvidenceContent(retrievalResult.businessTermDocuments(),
 					retrievalResult.agentKnowledgeDocuments());
 			log.info("Evidence content built as follows \n {} \n", evidence);
-			// 输出证据内容
-			outputEvidenceContent(retrievalResult.allDocuments(), sink);
 
-			// 返回结果
+			outputEvidenceContent(retrievalResult.allDocuments(), sink);
 			return Map.of(EVIDENCE, evidence);
 		}
 		catch (Exception e) {
@@ -141,6 +167,11 @@ public class EvidenceRecallNode implements NodeAction {
 		}
 	}
 
+	/**
+ * `outputRewrittenQuery`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private void outputRewrittenQuery(String standaloneQuery, Sinks.Many<String> sink) {
 		sink.tryEmitNext("重写后查询：\n");
 		sink.tryEmitNext(standaloneQuery + "\n");
@@ -148,72 +179,79 @@ public class EvidenceRecallNode implements NodeAction {
 		sink.tryEmitNext("正在获取证据...");
 	}
 
+	/**
+ * `retrieveDocuments`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private DocumentRetrievalResult retrieveDocuments(String agentId, String standaloneQuery) {
-		// 获取业务知识文档
 		List<Document> businessTermDocuments = vectorStoreService
 			.getDocumentsForAgent(agentId, standaloneQuery, DocumentMetadataConstant.BUSINESS_TERM)
 			.stream()
 			.toList();
 
-		// 获取智能体知识文档
 		List<Document> agentKnowledgeDocuments = vectorStoreService
 			.getDocumentsForAgent(agentId, standaloneQuery, DocumentMetadataConstant.AGENT_KNOWLEDGE)
 			.stream()
 			.toList();
 
-		// 合并所有证据文档
 		List<Document> allDocuments = new ArrayList<>();
-		if (!businessTermDocuments.isEmpty())
+		if (!businessTermDocuments.isEmpty()) {
 			allDocuments.addAll(businessTermDocuments);
-		if (!agentKnowledgeDocuments.isEmpty())
+		}
+		if (!agentKnowledgeDocuments.isEmpty()) {
 			allDocuments.addAll(agentKnowledgeDocuments);
+		}
 
-		// 添加文档检索日志
 		log.info("Retrieved documents for agent {}: {} business term docs, {} agent knowledge docs, total {} docs",
 				agentId, businessTermDocuments.size(), agentKnowledgeDocuments.size(), allDocuments.size());
 
 		return new DocumentRetrievalResult(businessTermDocuments, agentKnowledgeDocuments, allDocuments);
 	}
 
-	// 构建证据内容，输出格式
-	// 1. [来源: 2025Q3报告-销售数据.md] ...华东地区的增长主要来自于核心用户...
-	// 2. [来源: 客服FAQ] Q: 退款怎么算? A: 只统计已入库退货...
+	/**
+	 * 把两类知识文档格式化成统一证据文本。
+	 *
+	 * 这里最终返回的字符串不是简单拼接，而是借助 `PromptHelper` 包装成更适合后续节点消费的知识提示片段。
+	 */
 	private String buildFormattedEvidenceContent(List<Document> businessTermDocuments,
 			List<Document> agentKnowledgeDocuments) {
-		// 构建业务知识内容
 		String businessKnowledgeContent = buildBusinessKnowledgeContent(businessTermDocuments);
-
-		// 构建智能体知识内容
 		String agentKnowledgeContent = buildAgentKnowledgeContent(agentKnowledgeDocuments);
 
-		// 使用PromptHelper的模板方法进行渲染
 		String businessPrompt = PromptHelper.buildBusinessKnowledgePrompt(businessKnowledgeContent);
 		String agentPrompt = PromptHelper.buildAgentKnowledgePrompt(agentKnowledgeContent);
 
-		// 添加证据构建日志
 		log.info("Building evidence content: business knowledge length {}, agent knowledge length {}",
 				businessKnowledgeContent.length(), agentKnowledgeContent.length());
 
-		// 拼接业务知识和智能体知识作为证据
 		return businessKnowledgeContent.isEmpty() && agentKnowledgeContent.isEmpty() ? "无"
 				: businessPrompt + (agentKnowledgeContent.isEmpty() ? "" : "\n\n" + agentPrompt);
 	}
 
+	/**
+ * `buildBusinessKnowledgeContent`：把输入内容转换成另一种更适合下游消费的结构。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private String buildBusinessKnowledgeContent(List<Document> businessTermDocuments) {
 		if (businessTermDocuments.isEmpty()) {
 			return "";
 		}
 
 		StringBuilder result = new StringBuilder();
-
-		// 直接使用Document的完整内容，每行一个Document
 		for (Document doc : businessTermDocuments) {
 			result.append(doc.getText()).append("\n");
 		}
-
 		return result.toString();
 	}
 
+	/**
+	 * 智能体知识根据类型不同使用不同格式。
+	 *
+	 * - FAQ / QA：格式化成 Q/A 形式，适合模型直接理解。
+	 * - DOCUMENT：保留来源标题和文件名，适合给模型做文档型证据补充。
+	 */
 	private String buildAgentKnowledgeContent(List<Document> agentKnowledgeDocuments) {
 		if (agentKnowledgeDocuments.isEmpty()) {
 			return "";
@@ -226,7 +264,6 @@ public class EvidenceRecallNode implements NodeAction {
 			Map<String, Object> metadata = doc.getMetadata();
 			String knowledgeType = (String) metadata.get(DocumentMetadataConstant.CONCRETE_AGENT_KNOWLEDGE_TYPE);
 
-			// 根据知识类型调用不同的处理方法
 			if (KnowledgeType.FAQ.getCode().equals(knowledgeType) || KnowledgeType.QA.getCode().equals(knowledgeType)) {
 				processFaqOrQaKnowledge(doc, i, result);
 			}
@@ -239,7 +276,10 @@ public class EvidenceRecallNode implements NodeAction {
 	}
 
 	/**
-	 * 处理FAQ或QA类型的知识
+	 * FAQ / QA 型知识处理逻辑。
+	 *
+	 * 这里会额外去数据库查一次 `AgentKnowledge`，因为向量检索结果里往往只有片段内容，
+	 * 但最终展示时还需要标题与完整答案作为来源补充。
 	 */
 	private void processFaqOrQaKnowledge(Document doc, int index, StringBuilder result) {
 		Map<String, Object> metadata = doc.getMetadata();
@@ -254,7 +294,6 @@ public class EvidenceRecallNode implements NodeAction {
 				AgentKnowledge knowledge = agentKnowledgeMapper.selectById(knowledgeId);
 				if (knowledge != null) {
 					String title = knowledge.getTitle();
-					// 格式：[来源: xxx] Q: xxx A: xxx
 					result.append(index + 1).append(". [来源: ");
 					result.append(title.isEmpty() ? "知识库" : title);
 					result.append("] Q: ").append(content).append(" A: ").append(knowledge.getContent()).append("\n");
@@ -267,19 +306,19 @@ public class EvidenceRecallNode implements NodeAction {
 			}
 			catch (Exception e) {
 				log.error("Error getting knowledge by id: {}", knowledgeId, e);
-				// 如果获取失败，使用原始内容
 				result.append(index + 1).append(". [来源: 知识库] ").append(content).append("\n");
 			}
 		}
 		else {
-			// 如果没有知识ID，使用原始内容
 			log.error("No knowledge id found for agent knowledge document: {}", doc.getId());
 			result.append(index + 1).append(". [来源: 知识库] ").append(content).append("\n");
 		}
 	}
 
 	/**
-	 * 处理DOCUMENT类型的知识
+	 * 文档型知识处理逻辑。
+	 *
+	 * 这里尽量拼出“标题-文件名”的来源信息，让后续模型能感知证据出处。
 	 */
 	private void processDocumentKnowledge(Document doc, int index, StringBuilder result) {
 		Map<String, Object> metadata = doc.getMetadata();
@@ -310,7 +349,6 @@ public class EvidenceRecallNode implements NodeAction {
 			}
 		}
 
-		// 构建来源信息，格式为"标题-文件名"
 		String sourceInfo = title.isEmpty() ? "文档" : title;
 		if (!sourceFilename.isEmpty()) {
 			sourceInfo += "-" + sourceFilename;
@@ -321,6 +359,11 @@ public class EvidenceRecallNode implements NodeAction {
 		result.append("] ").append(content).append("\n");
 	}
 
+	/**
+	 * 往前端输出证据摘要，而不是完整文档。
+	 *
+	 * 这样可以避免把过长原文直接刷到界面上，同时也能让用户知道系统“确实召回到了哪些证据”。
+	 */
 	private void outputEvidenceContent(List<Document> allDocuments, Sinks.Many<String> sink) {
 		if (allDocuments.isEmpty()) {
 			return;
@@ -329,14 +372,11 @@ public class EvidenceRecallNode implements NodeAction {
 		log.info("Outputting evidence content for {} documents", allDocuments.size());
 		sink.tryEmitNext("已找到 " + allDocuments.size() + " 条相关证据文档，如下是文档的部分信息\n");
 
-		// 只输出文档的摘要信息，而不是完整内容
 		for (int i = 0; i < allDocuments.size(); i++) {
 			Document doc = allDocuments.get(i);
 			String content = doc.getText();
 
-			// 限制每个文档摘要的长度，最多显示100个字符
 			String summary = content.length() > 100 ? content.substring(0, 100) + "..." : content;
-
 			sink.tryEmitNext(String.format("证据%d: %s\n", i + 1, summary));
 		}
 	}
@@ -345,6 +385,11 @@ public class EvidenceRecallNode implements NodeAction {
 			List<Document> allDocuments) {
 	}
 
+	/**
+	 * 从模型输出里提取重写后的 standalone query。
+	 *
+	 * 这里先用 `MarkdownParserUtil` 去掉模型可能包裹的 Markdown，再交给 `JsonParseUtil` 反序列化为 DTO。
+	 */
 	private String extractStandaloneQuery(String llmOutput) {
 		EvidenceQueryRewriteDTO evidenceQueryRewriteDTO;
 		try {

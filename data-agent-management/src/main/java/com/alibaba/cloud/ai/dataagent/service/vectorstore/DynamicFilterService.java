@@ -177,8 +177,10 @@ public class DynamicFilterService {
 	}
 
 	/**
-	 * 转义字符串字面量中的特殊字符
-	 */
+ * `escapeStringLiteral`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public static String escapeStringLiteral(String input) {
 		if (input == null) {
 			return "";

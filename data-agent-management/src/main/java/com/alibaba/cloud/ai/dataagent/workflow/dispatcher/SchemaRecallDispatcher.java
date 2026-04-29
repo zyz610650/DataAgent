@@ -18,23 +18,35 @@ package com.alibaba.cloud.ai.dataagent.workflow.dispatcher;
 import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.EdgeAction;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
-
-import java.util.List;
 
 import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT;
 import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_RELATION_NODE;
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 
+/**
+ * Schema 召回分发器。
+ *
+ * 当前节点的判断原则非常直接：
+ * - 召回到表文档，说明后续还有继续构建 Schema 的基础，进入 `TABLE_RELATION_NODE`。
+ * - 一个表都没召回到，后面继续让模型猜只会制造噪声，因此直接结束。
+ */
 @Slf4j
 public class SchemaRecallDispatcher implements EdgeAction {
 
+	/**
+ * `apply`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	@Override
 	public String apply(OverAllState state) throws Exception {
 		List<Document> tableDocuments = StateUtil.getDocumentList(state, TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT);
-		if (tableDocuments != null && !tableDocuments.isEmpty())
+		if (tableDocuments != null && !tableDocuments.isEmpty()) {
 			return TABLE_RELATION_NODE;
+		}
 		log.info("No table documents found, ending conversation");
 		return END;
 	}

@@ -432,8 +432,10 @@ public class SchemaServiceImpl implements SchemaService {
 	}
 
 	/**
-	 * Attach column documents to corresponding tables
-	 */
+ * `attachColumnsToTables`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	private void attachColumnsToTables(List<Document> columns, List<TableDTO> tableList) {
 		if (CollectionUtils.isEmpty(columns)) {
 			return;

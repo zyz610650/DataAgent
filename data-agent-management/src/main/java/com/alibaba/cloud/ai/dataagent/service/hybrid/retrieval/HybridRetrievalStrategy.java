@@ -20,6 +20,12 @@ import org.springframework.ai.document.Document;
 
 import java.util.List;
 
+/**
+ * HybridRetrievalStrategy：服务层接口。
+ *
+ * 它定义了混合检索Strategy相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
+ */
 public interface HybridRetrievalStrategy {
 
 	/**

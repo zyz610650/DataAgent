@@ -21,6 +21,12 @@ import org.springframework.context.ApplicationEvent;
 import java.time.Clock;
 
 @Getter
+/**
+ * AgentKnowledgeDeletionEvent：领域事件定义。
+ *
+ * 它用于在智能体知识Deletion相关流程中解耦“事件发布”和“事件处理”，常见于异步任务、清理任务和状态广播。
+ * 阅读时建议顺着事件发布方和监听方一起看，最容易理解它在主链路中的位置。
+ */
 public class AgentKnowledgeDeletionEvent extends ApplicationEvent {
 
 	private final Integer knowledgeId;

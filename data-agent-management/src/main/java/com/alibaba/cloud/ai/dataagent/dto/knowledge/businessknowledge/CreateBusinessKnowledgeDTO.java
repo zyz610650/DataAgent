@@ -23,12 +23,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Business knowledge management entity class
+ * CreateBusinessKnowledgeDTO：请求参数或中间结果传输对象。
+ *
+ * 它主要负责承载Create业务知识相关字段，本身不放复杂业务逻辑。
+ * 阅读时重点看字段语义、默认值，以及这些字段最终会在哪一层被消费。
  */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class CreateBusinessKnowledgeDTO {
 
 	@NotBlank(message = "Business term cannot be empty")

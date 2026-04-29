@@ -380,8 +380,10 @@ public abstract class AbstractCodePoolExecutorService implements CodePoolExecuto
 	}
 
 	/**
-	 * Delete temporary directory
-	 */
+ * `clearTempDir`：清理临时状态、资源或历史数据。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	protected void clearTempDir(Path tempDir) {
 		try {
 			Files.walkFileTree(tempDir, new SimpleFileVisitor<>() {
@@ -411,8 +413,10 @@ public abstract class AbstractCodePoolExecutorService implements CodePoolExecuto
 	}
 
 	/**
-	 * Generate unique container name
-	 */
+ * `generateContainerName`：生成、重写或召回当前阶段需要的内容。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	protected String generateContainerName() {
 		return this.properties.getContainerNamePrefix() + "_" + System.currentTimeMillis() + "_"
 				+ Thread.currentThread().getName();

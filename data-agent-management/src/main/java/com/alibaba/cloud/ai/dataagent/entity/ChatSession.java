@@ -22,12 +22,11 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * Chat Session Entity Class
+ * ChatSession：持久化实体对象。
+ *
+ * 这个类通常和数据库里的对话会话记录对应，字段设计会直接影响 Mapper SQL 和状态保存方式。
+ * 学习时建议重点看状态字段、时间字段，以及哪些字段会被接口层脱敏或忽略。
  */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class ChatSession {
 
 	private String id; // UUID

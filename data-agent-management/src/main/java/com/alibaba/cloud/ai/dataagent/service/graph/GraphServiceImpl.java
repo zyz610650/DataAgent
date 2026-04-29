@@ -15,18 +15,29 @@
  */
 package com.alibaba.cloud.ai.dataagent.service.graph;
 
-import com.alibaba.cloud.ai.dataagent.service.langfuse.LangfuseService;
-import com.alibaba.cloud.ai.dataagent.enums.TextType;
-import com.alibaba.cloud.ai.dataagent.workflow.node.PlannerNode;
 import com.alibaba.cloud.ai.dataagent.dto.GraphRequest;
+import com.alibaba.cloud.ai.dataagent.enums.TextType;
 import com.alibaba.cloud.ai.dataagent.service.graph.Context.MultiTurnContextManager;
 import com.alibaba.cloud.ai.dataagent.service.graph.Context.StreamContext;
+import com.alibaba.cloud.ai.dataagent.service.langfuse.LangfuseService;
 import com.alibaba.cloud.ai.dataagent.vo.GraphNodeResponse;
-import com.alibaba.cloud.ai.graph.*;
+import com.alibaba.cloud.ai.dataagent.workflow.node.PlannerNode;
+import com.alibaba.cloud.ai.graph.CompileConfig;
+import com.alibaba.cloud.ai.graph.CompiledGraph;
+import com.alibaba.cloud.ai.graph.NodeOutput;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.RunnableConfig;
+import com.alibaba.cloud.ai.graph.StateGraph;
 import com.alibaba.cloud.ai.graph.exception.GraphRunnerException;
 import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import io.opentelemetry.api.trace.Span;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
@@ -35,15 +46,38 @@ import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.AGENT_ID;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.HUMAN_FEEDBACK_DATA;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.HUMAN_FEEDBACK_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.HUMAN_REVIEW_ENABLED;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.INPUT_KEY;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.IS_ONLY_NL2SQL;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.MULTI_TURN_CONTEXT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PLANNER_NODE_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_GENERATE_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.STREAM_EVENT_COMPLETE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.STREAM_EVENT_ERROR;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.TRACE_THREAD_ID;
 
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
-
+/**
+ * Graph 工作流执行服务。
+ *
+ * 这是 `GraphController` 和 `StateGraph` 之间的桥接层，负责把一次 HTTP 流式请求转换成真正的图执行。
+ * 它承接了三类关键职责：
+ * 1. 创建、恢复和销毁一次流式会话的上下文。
+ * 2. 把 Graph 节点流式输出适配成前端可消费的 SSE 事件。
+ * 3. 处理取消、失败、完成三种生命周期，并做好 tracing 收尾。
+ *
+ * 关键框架 API：
+ * - {@link StateGraph} / {@link CompiledGraph}：
+ *   前者描述工作流拓扑，后者是可实际运行的编译结果。
+ * - {@link RunnableConfig}：
+ *   每次图执行的运行时配置，常用于传递 threadId、metadata、resume 状态。
+ * - {@link Flux}：
+ *   Reactor 响应式流类型，Graph 节点的流式输出和 SSE 返回都建立在它之上。
+ * - {@link Sinks.Many}：
+ *   向响应式流手动推送事件的入口，适合把异步工作流输出桥接到 HTTP 连接。
+ */
 @Slf4j
 @Service
 public class GraphServiceImpl implements GraphService {
@@ -52,6 +86,15 @@ public class GraphServiceImpl implements GraphService {
 
 	private final ExecutorService executor;
 
+	/**
+	 * 一个 threadId 对应一次流式会话上下文。
+	 * 里面保存：
+	 * - 当前 SSE sink
+	 * - Reactor 订阅句柄
+	 * - 文本类型状态
+	 * - 已累计输出
+	 * - tracing span
+	 */
 	private final ConcurrentHashMap<String, StreamContext> streamContextMap = new ConcurrentHashMap<>();
 
 	private final MultiTurnContextManager multiTurnContextManager;
@@ -61,12 +104,26 @@ public class GraphServiceImpl implements GraphService {
 	public GraphServiceImpl(StateGraph stateGraph, ExecutorService executorService,
 			MultiTurnContextManager multiTurnContextManager, LangfuseService langfuseReporter)
 			throws GraphStateException {
+		// `interruptBefore(HUMAN_FEEDBACK_NODE)` 的含义是：
+		// 工作流执行到人工反馈节点前先暂停，把继续权交给外部请求。
+		// 这样前端就可以先展示计划，再决定批准、修改或拒绝它。
 		this.compiledGraph = stateGraph.compile(CompileConfig.builder().interruptBefore(HUMAN_FEEDBACK_NODE).build());
 		this.executor = executorService;
 		this.multiTurnContextManager = multiTurnContextManager;
 		this.langfuseReporter = langfuseReporter;
 	}
 
+	/**
+	 * 以同步方式运行图，并直接返回最终 SQL。
+	 *
+	 * 适用场景：
+	 * - MCP 工具调用
+	 * - 只关心最终 SQL，不关心中间推理过程的接口
+	 *
+	 * 与 `graphStreamProcess(...)` 的区别是：
+	 * - 这里走 `invoke(...)`，拿一次性最终结果。
+	 * - SSE 主链路走 `stream(...)`，边执行边产出。
+	 */
 	@Override
 	public String nl2sql(String naturalQuery, String agentId) throws GraphRunnerException {
 		OverAllState state = compiledGraph
@@ -76,13 +133,24 @@ public class GraphServiceImpl implements GraphService {
 		return state.value(SQL_GENERATE_OUTPUT, "");
 	}
 
+	/**
+	 * 发起一次图的流式执行。
+	 *
+	 * 执行步骤：
+	 * 1. 生成或确认 threadId。
+	 * 2. 初始化当前 thread 对应的 `StreamContext`。
+	 * 3. 根据是否带 `humanFeedbackContent` 判断是新请求还是“从暂停点继续执行”。
+	 *
+	 * 这里不直接返回业务结果，而是通过传入的 `sink` 持续推送中间和最终事件。
+	 */
 	@Override
 	public void graphStreamProcess(Sinks.Many<ServerSentEvent<GraphNodeResponse>> sink, GraphRequest graphRequest) {
 		if (!StringUtils.hasText(graphRequest.getThreadId())) {
 			graphRequest.setThreadId(UUID.randomUUID().toString());
 		}
 		String threadId = graphRequest.getThreadId();
-		// 创建或获取 StreamContext
+
+		// 一个 threadId 只能对应一个活跃的流上下文；重复请求会复用同一个上下文对象。
 		StreamContext context = streamContextMap.computeIfAbsent(threadId, k -> new StreamContext());
 		context.setSink(sink);
 		if (StringUtils.hasText(graphRequest.getHumanFeedbackContent())) {
@@ -94,8 +162,16 @@ public class GraphServiceImpl implements GraphService {
 	}
 
 	/**
-	 * 停止指定 threadId 的流式处理 线程安全：使用 remove 操作确保只有一个线程能获取到 context
-	 * @param threadId 线程ID
+	 * 主动停止指定 thread 的流式处理。
+	 *
+	 * 最常见触发点：
+	 * - 浏览器取消订阅
+	 * - 网络断开
+	 * - Sink 发流失败
+	 *
+	 * 为什么这里优先 `remove`：
+	 * - `ConcurrentHashMap.remove(...)` 可以保证只有一个线程成功拿到上下文并执行清理。
+	 * - 这样能避免重复释放订阅、重复结束 span。
 	 */
 	@Override
 	public void stopStreamProcessing(String threadId) {
@@ -106,7 +182,7 @@ public class GraphServiceImpl implements GraphService {
 		multiTurnContextManager.discardPending(threadId);
 		StreamContext context = streamContextMap.remove(threadId);
 		if (context != null) {
-			// 客户端断开，结束 Langfuse span
+			// 用户主动断开不一定是失败，更常见是前端离开页面，因此这里按成功关闭 span。
 			if (context.getSpan() != null && context.getSpan().isRecording()) {
 				langfuseReporter.endSpanSuccess(context.getSpan(), threadId, context.getCollectedOutput());
 			}
@@ -115,6 +191,11 @@ public class GraphServiceImpl implements GraphService {
 		}
 	}
 
+	/**
+ * `handleNewProcess`：处理当前阶段的一次业务分支或中间结果。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	private void handleNewProcess(GraphRequest graphRequest) {
 		String query = graphRequest.getQuery();
 		String agentId = graphRequest.getAgentId();
@@ -124,16 +205,16 @@ public class GraphServiceImpl implements GraphService {
 		if (!StringUtils.hasText(threadId) || !StringUtils.hasText(agentId) || !StringUtils.hasText(query)) {
 			throw new IllegalArgumentException("Invalid arguments");
 		}
+
 		StreamContext context = streamContextMap.get(threadId);
 		if (context == null || context.getSink() == null) {
 			throw new IllegalStateException("StreamContext not found for threadId: " + threadId);
 		}
-		// 检查是否已经清理，如果已清理则不再启动新的流
 		if (context.isCleaned()) {
 			log.warn("StreamContext already cleaned for threadId: {}, skipping stream start", threadId);
 			return;
 		}
-		// 开始 Langfuse 追踪
+
 		Span span = langfuseReporter.startLLMSpan("graph-stream", graphRequest);
 		context.setSpan(span);
 
@@ -146,6 +227,13 @@ public class GraphServiceImpl implements GraphService {
 		subscribeToFlux(context, nodeOutputFlux, graphRequest, agentId, threadId);
 	}
 
+	/**
+	 * 处理人工反馈后的续跑。
+	 *
+	 * 这条路径和全新请求最大的不同是：
+	 * - 它不会从头新建图状态；
+	 * - 而是通过 `updateState(...)` 在既有 thread 上修改状态，然后从暂停点继续。
+	 */
 	private void handleHumanFeedback(GraphRequest graphRequest) {
 		String agentId = graphRequest.getAgentId();
 		String threadId = graphRequest.getThreadId();
@@ -153,6 +241,7 @@ public class GraphServiceImpl implements GraphService {
 		if (!StringUtils.hasText(threadId) || !StringUtils.hasText(agentId) || !StringUtils.hasText(feedbackContent)) {
 			throw new IllegalArgumentException("Invalid arguments");
 		}
+
 		StreamContext context = streamContextMap.get(threadId);
 		if (context == null || context.getSink() == null) {
 			throw new IllegalStateException("StreamContext not found for threadId: " + threadId);
@@ -161,13 +250,14 @@ public class GraphServiceImpl implements GraphService {
 			log.warn("StreamContext already cleaned for threadId: {}, skipping stream start", threadId);
 			return;
 		}
-		// 开始 Langfuse 追踪
+
 		Span span = langfuseReporter.startLLMSpan("graph-feedback", graphRequest);
 		context.setSpan(span);
 
 		Map<String, Object> feedbackData = Map.of("feedback", !graphRequest.isRejectedPlan(), "feedback_content",
 				feedbackContent);
 		if (graphRequest.isRejectedPlan()) {
+			// 用户拒绝上一版计划时，回滚多轮上下文到本轮开始前，避免错误计划文本继续污染上下文。
 			multiTurnContextManager.restartLastTurn(threadId);
 		}
 		Map<String, Object> stateUpdate = new HashMap<>();
@@ -177,6 +267,7 @@ public class GraphServiceImpl implements GraphService {
 		RunnableConfig baseConfig = RunnableConfig.builder().threadId(threadId).build();
 		RunnableConfig updatedConfig;
 		try {
+			// `updateState` 是图框架的“恢复点修改”能力，常用于 human-in-the-loop 场景。
 			updatedConfig = compiledGraph.updateState(baseConfig, stateUpdate);
 		}
 		catch (Exception e) {
@@ -191,17 +282,19 @@ public class GraphServiceImpl implements GraphService {
 	}
 
 	/**
-	 * 订阅 Flux 并原子性地设置 Disposable 线程安全：使用 synchronized 确保 Disposable 设置的原子性
-	 * @param context 流式处理上下文
-	 * @param nodeOutputFlux 节点输出流
-	 * @param graphRequest 图请求
-	 * @param agentId 代理ID
-	 * @param threadId 线程ID
+	 * 订阅 Graph 的流式输出，并把订阅句柄保存到上下文。
+	 *
+	 * 为什么放到 `CompletableFuture.runAsync(...)` 里：
+	 * - Controller 线程不需要等待图真正开始执行。
+	 * - 先把 HTTP SSE 连接建起来，再异步开始消费工作流输出，用户体验更稳定。
+	 *
+	 * 为什么要保存 `Disposable`：
+	 * - `Disposable` 是 Reactor 的取消句柄。
+	 * - 当前端断开时，可以通过它及时停止后台数据流。
 	 */
 	private void subscribeToFlux(StreamContext context, Flux<NodeOutput> nodeOutputFlux, GraphRequest graphRequest,
 			String agentId, String threadId) {
 		CompletableFuture.runAsync(() -> {
-			// 在订阅之前检查上下文是否仍然有效
 			if (context.isCleaned()) {
 				log.debug("StreamContext cleaned before subscription for threadId: {}", threadId);
 				return;
@@ -209,16 +302,15 @@ public class GraphServiceImpl implements GraphService {
 			Disposable disposable = nodeOutputFlux.subscribe(output -> handleNodeOutput(graphRequest, output),
 					error -> handleStreamError(agentId, threadId, error),
 					() -> handleStreamComplete(agentId, threadId));
-			// 原子性地设置 Disposable，如果已经清理则立即释放
+
+			// 订阅建立和上下文清理可能并发发生，因此这里做原子保护。
 			synchronized (context) {
 				if (context.isCleaned()) {
-					// 如果已经清理，立即释放刚创建的 Disposable
 					if (disposable != null && !disposable.isDisposed()) {
 						disposable.dispose();
 					}
 				}
 				else {
-					// 只有在未清理的情况下才设置 Disposable
 					context.setDisposable(disposable);
 				}
 			}
@@ -226,13 +318,17 @@ public class GraphServiceImpl implements GraphService {
 	}
 
 	/**
-	 * 处理流式错误 线程安全：使用 remove 操作确保只有一个线程能获取到 context
+	 * 处理流执行中的异常。
+	 *
+	 * 当前策略是：
+	 * 1. 上报 tracing 失败状态。
+	 * 2. 向前端发送 `error` 事件。
+	 * 3. 结束 sink 并清理上下文。
 	 */
 	private void handleStreamError(String agentId, String threadId, Throwable error) {
 		log.error("Error in stream processing for threadId: {}: ", threadId, error);
 		StreamContext context = streamContextMap.remove(threadId);
 		if (context != null && !context.isCleaned()) {
-			// 结束 Langfuse span（失败）
 			if (context.getSpan() != null) {
 				langfuseReporter.endSpanError(context.getSpan(), threadId,
 						error instanceof Exception ? (Exception) error : new RuntimeException(error));
@@ -246,20 +342,21 @@ public class GraphServiceImpl implements GraphService {
 						.build());
 				context.getSink().tryEmitComplete();
 			}
-			// 清理资源（cleanup 内部已经保证只执行一次）
 			context.cleanup();
 		}
 	}
 
 	/**
-	 * 处理流式完成 线程安全：使用 remove 操作确保只有一个线程能获取到 context
+	 * 处理流执行正常完成。
+	 *
+	 * 正常完成时除了发 `complete` 事件，还会通知多轮上下文管理器“本轮已完成”，
+	 * 这样后续新问题才能正确拼接历史上下文。
 	 */
 	private void handleStreamComplete(String agentId, String threadId) {
 		log.info("Stream processing completed successfully for threadId: {}", threadId);
 		multiTurnContextManager.finishTurn(threadId);
 		StreamContext context = streamContextMap.remove(threadId);
 		if (context != null && !context.isCleaned()) {
-			// 结束 Langfuse span（成功）
 			if (context.getSpan() != null) {
 				langfuseReporter.endSpanSuccess(context.getSpan(), threadId, context.getCollectedOutput());
 			}
@@ -275,7 +372,10 @@ public class GraphServiceImpl implements GraphService {
 	}
 
 	/**
-	 * 处理节点输出
+	 * 分发单个 Graph 节点输出。
+	 *
+	 * 当前最重要的是 `StreamingOutput`，因为前端展示依赖的是增量文本。
+	 * 如果未来引入新的 NodeOutput 类型，也应该优先在这里统一扩展。
 	 */
 	private void handleNodeOutput(GraphRequest request, NodeOutput output) {
 		log.debug("Received output: {}", output.getClass().getSimpleName());
@@ -284,10 +384,16 @@ public class GraphServiceImpl implements GraphService {
 		}
 	}
 
+	/**
+	 * 处理单个流式文本片段。
+	 *
+	 * 这里除了把 chunk 发给前端，还要额外做两件事：
+	 * 1. 识别文本类型起止标记，区分普通文本和 JSON 块。
+	 * 2. 对 Planner 节点输出做额外缓存，方便人工反馈时回看上一版计划。
+	 */
 	private void handleStreamNodeOutput(GraphRequest request, StreamingOutput output) {
 		String threadId = request.getThreadId();
 		StreamContext context = streamContextMap.get(threadId);
-		// 检查是否已经停止处理
 		if (context == null || context.getSink() == null) {
 			log.debug("Stream processing already stopped for threadId: {}, skipping output", threadId);
 			return;
@@ -300,7 +406,6 @@ public class GraphServiceImpl implements GraphService {
 			return;
 		}
 
-		// 如果是文本标记符号，则更新文本类型
 		TextType originType = context.getTextType();
 		TextType textType;
 		boolean isTypeSign = false;
@@ -318,7 +423,8 @@ public class GraphServiceImpl implements GraphService {
 			}
 			context.setTextType(textType);
 		}
-		// 文本标记符号不返回给前端
+
+		// 文本类型标记只用于后端状态机，不应该泄露给前端。
 		if (!isTypeSign) {
 			context.appendOutput(chunk);
 			if (PlannerNode.class.getSimpleName().equals(node)) {
@@ -331,12 +437,12 @@ public class GraphServiceImpl implements GraphService {
 				.text(chunk)
 				.textType(textType)
 				.build();
-			// 检查发送是否成功，如果失败说明客户端已断开
+
+			// `tryEmitNext` 不会阻塞，它会返回一个发射结果，让调用方自行决定失败策略。
 			Sinks.EmitResult result = context.getSink().tryEmitNext(ServerSentEvent.builder(response).build());
 			if (result.isFailure()) {
 				log.warn("Failed to emit data to sink for threadId: {}, result: {}. Stopping stream processing.",
 						threadId, result);
-				// 如果发送失败，停止处理
 				stopStreamProcessing(threadId);
 			}
 		}

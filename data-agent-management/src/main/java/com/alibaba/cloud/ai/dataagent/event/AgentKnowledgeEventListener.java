@@ -15,10 +15,11 @@
  */
 package com.alibaba.cloud.ai.dataagent.event;
 
-import com.alibaba.cloud.ai.dataagent.enums.EmbeddingStatus;
 import com.alibaba.cloud.ai.dataagent.entity.AgentKnowledge;
+import com.alibaba.cloud.ai.dataagent.enums.EmbeddingStatus;
 import com.alibaba.cloud.ai.dataagent.mapper.AgentKnowledgeMapper;
 import com.alibaba.cloud.ai.dataagent.service.knowledge.AgentKnowledgeResourceManager;
+import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -26,8 +27,17 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-import java.time.LocalDateTime;
-
+/**
+ * 智能体知识事件监听器。
+ *
+ * 它连接了“知识记录写入数据库”和“异步资源处理”这两条链路：
+ * - 创建知识后，监听 embedding 事件并写入向量库
+ * - 删除知识后，监听 deletion 事件并清理文件与向量数据
+ *
+ * 这里使用的是“事务提交后异步监听”模式：
+ * - `TransactionPhase.AFTER_COMMIT` 确保只有数据库主事务成功提交后才会触发
+ * - `@Async("dbOperationExecutor")` 把重活放到专用线程池里，不阻塞接口返回
+ */
 @Component
 @Slf4j
 @RequiredArgsConstructor
@@ -38,7 +48,15 @@ public class AgentKnowledgeEventListener {
 	private final AgentKnowledgeResourceManager agentKnowledgeResourceManager;
 
 	/**
-	 * phase = TransactionPhase.AFTER_COMMIT 核心作用：只有当 Service 层的主事务提交成功后，才会执行这个方法。
+	 * 处理知识 embedding 事件。
+	 *
+	 * 执行步骤：
+	 * 1. 重新从数据库读取最新知识记录
+	 * 2. 把状态更新成 PROCESSING
+	 * 3. 执行向量化并写入向量库
+	 * 4. 成功则标记 COMPLETED，失败则标记 FAILED
+	 *
+	 * 这里重新查库而不是直接用事件里塞完整对象，是为了降低事件载荷，并保证拿到的是提交后的最终数据。
 	 */
 	@Async("dbOperationExecutor")
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -46,7 +64,6 @@ public class AgentKnowledgeEventListener {
 		log.info("Received AgentKnowledgeEmbeddingEvent. agentKnowledgeId: {}", event.getKnowledgeId());
 		Integer id = event.getKnowledgeId();
 
-		// 1. 查询数据
 		AgentKnowledge knowledge = agentKnowledgeMapper.selectById(id);
 		if (knowledge == null) {
 			log.error("Knowledge not found during async processing. Id: {}", id);
@@ -54,44 +71,51 @@ public class AgentKnowledgeEventListener {
 		}
 
 		try {
-			// 2. 更新状态为 PROCESSING
 			updateStatus(knowledge, EmbeddingStatus.PROCESSING, null);
-
-			// 3. 执行核心向量化逻辑
 			agentKnowledgeResourceManager.doEmbedingToVectorStore(knowledge);
-
-			// 4. 更新状态为 COMPLETED
 			updateStatus(knowledge, EmbeddingStatus.COMPLETED, null);
 
 			log.info("Successfully embedded knowledge. Id: {}", id);
-
 		}
 		catch (Exception e) {
 			log.error("Failed to embed knowledge. Id: {}", id, e);
-			// 5. 失败处理
 			updateStatus(knowledge, EmbeddingStatus.FAILED, e.getMessage());
 		}
 		log.info("Finished processing AgentKnowledgeEmbeddingEvent. agentKnowledgeId: {}", event.getKnowledgeId());
 
 	}
 
+	/**
+	 * 更新 embedding 状态。
+	 *
+	 * 这里单独拆出来，是为了统一处理更新时间和错误信息截断逻辑。
+	 */
 	private void updateStatus(AgentKnowledge knowledge, EmbeddingStatus status, String errorMsg) {
 		knowledge.setEmbeddingStatus(status);
 		knowledge.setUpdatedTime(LocalDateTime.now());
 		if (errorMsg != null) {
-			// 截断错误信息防止数据库报错
+			// 错误信息可能非常长，这里做数据库安全截断。
 			knowledge.setErrorMsg(errorMsg.length() > 250 ? errorMsg.substring(0, 250) : errorMsg);
 		}
 		agentKnowledgeMapper.update(knowledge);
 	}
 
+	/**
+	 * 处理知识删除后的异步资源清理。
+	 *
+	 * 清理内容包括：
+	 * 1. 向量库中的嵌入数据
+	 * 2. 文件存储中的原始知识文件
+	 *
+	 * 只有两者都成功时，才把 `isResourceCleaned` 标记为 1。
+	 * 如果某一步失败，后续可以依赖定时任务或人工补偿继续清理。
+	 */
 	@Async("dbOperationExecutor")
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
 	public void handleDeletionEvent(AgentKnowledgeDeletionEvent event) {
 		Integer id = event.getKnowledgeId();
 		log.info("Starting async resource cleanup for knowledgeId: {}", id);
 
-		// 1. 重新查询
 		AgentKnowledge knowledge = agentKnowledgeMapper.selectByIdIncludeDeleted(id);
 		if (knowledge == null) {
 			log.warn("Knowledge record physically missing, skipping cleanup. ID: {}", id);
@@ -99,15 +123,10 @@ public class AgentKnowledgeEventListener {
 		}
 
 		try {
-			// 2. 删除向量
 			boolean vectorDeleted = agentKnowledgeResourceManager.deleteFromVectorStore(knowledge.getAgentId(), id);
-
-			// 3. 删除文件
 			boolean fileDeleted = agentKnowledgeResourceManager.deleteKnowledgeFile(knowledge);
 
-			// 4. 更新清理状态
 			if (vectorDeleted && fileDeleted) {
-				// 只有都成功了，才标记为资源已清理
 				knowledge.setIsResourceCleaned(1);
 				knowledge.setUpdatedTime(LocalDateTime.now());
 				agentKnowledgeMapper.update(knowledge);
@@ -116,7 +135,6 @@ public class AgentKnowledgeEventListener {
 			else {
 				log.error("Cleanup incomplete. AgentKnowledgeID: {}, VectorDeleted: {}, FileDeleted: {}", id,
 						vectorDeleted, fileDeleted);
-				// isResourceCleaned=0，有定时任务兜底清理。
 			}
 
 		}

@@ -24,6 +24,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Getter
 @Setter
 @ConfigurationProperties(prefix = Constant.PROJECT_PROPERTIES_PREFIX)
+/**
+ * DataAgentProperties：配置属性绑定类。
+ *
+ * 它负责把 application.yml 中的数据智能体配置映射成可注入对象，供运行时统一读取。
+ * 学习时重点看配置前缀、默认值，以及这些参数会影响哪一段业务链路。
+ */
 public class DataAgentProperties {
 
 	private LlmServiceEnum llmServiceType = LlmServiceEnum.STREAM;
@@ -102,28 +108,38 @@ public class DataAgentProperties {
 		private int chunkSize = 1000;
 
 		/**
-		 * TokenTextSplitter 策略配置
-		 */
+ * `TokenTextSplitterConfig`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 		private TokenTextSplitterConfig token = new TokenTextSplitterConfig();
 
 		/**
-		 * RecursiveCharacterTextSplitter 策略配置
-		 */
+ * `RecursiveTextSplitterConfig`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 		private RecursiveTextSplitterConfig recursive = new RecursiveTextSplitterConfig();
 
 		/**
-		 * SentenceTextSplitter 策略配置
-		 */
+ * `SentenceTextSplitterConfig`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 		private SentenceTextSplitterConfig sentence = new SentenceTextSplitterConfig();
 
 		/**
-		 * SemanticTextSplitter 策略配置
-		 */
+ * `SemanticTextSplitterConfig`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 		private SemanticTextSplitterConfig semantic = new SemanticTextSplitterConfig();
 
 		/**
-		 * ParagraphTextSplitter 策略配置
-		 */
+ * `ParagraphTextSplitterConfig`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 		private ParagraphTextSplitterConfig paragraph = new ParagraphTextSplitterConfig();
 
 		/**

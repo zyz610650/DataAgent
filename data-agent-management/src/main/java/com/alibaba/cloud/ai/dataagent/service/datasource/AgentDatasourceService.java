@@ -18,6 +18,12 @@ package com.alibaba.cloud.ai.dataagent.service.datasource;
 import com.alibaba.cloud.ai.dataagent.entity.AgentDatasource;
 import java.util.List;
 
+/**
+ * AgentDatasourceService：服务层接口。
+ *
+ * 它定义了智能体数据源相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
+ */
 public interface AgentDatasourceService {
 
 	/** Initialize agent's database schema using datasource */

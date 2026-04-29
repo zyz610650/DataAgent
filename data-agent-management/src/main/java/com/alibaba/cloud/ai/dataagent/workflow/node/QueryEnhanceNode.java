@@ -17,25 +17,40 @@ package com.alibaba.cloud.ai.dataagent.workflow.node;
 
 import com.alibaba.cloud.ai.dataagent.dto.prompt.QueryEnhanceOutputDTO;
 import com.alibaba.cloud.ai.dataagent.enums.TextType;
-import com.alibaba.cloud.ai.dataagent.util.*;
+import com.alibaba.cloud.ai.dataagent.prompt.PromptHelper;
+import com.alibaba.cloud.ai.dataagent.service.llm.LlmService;
+import com.alibaba.cloud.ai.dataagent.util.ChatResponseUtil;
+import com.alibaba.cloud.ai.dataagent.util.FluxUtil;
+import com.alibaba.cloud.ai.dataagent.util.JsonParseUtil;
+import com.alibaba.cloud.ai.dataagent.util.MarkdownParserUtil;
+import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.GraphResponse;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
-import com.alibaba.cloud.ai.dataagent.prompt.PromptHelper;
-import com.alibaba.cloud.ai.dataagent.service.llm.LlmService;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
-import java.util.Map;
-
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.EVIDENCE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.INPUT_KEY;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.MULTI_TURN_CONTEXT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.QUERY_ENHANCE_NODE_OUTPUT;
 
 /**
- * 查询丰富节点，用于根据evidence信息把业务翻译。查询改写，扩展。 此节点不需要提取关键词，如果混合检索，如es等库会自行分词并计算相关性。
+ * 问题增强节点。
+ *
+ * 这个节点的目标不是直接生成 SQL，而是先把用户原始问句加工成更适合后续检索和规划使用的版本。
+ * 典型增强内容包括：
+ * - 结合 evidence 补全隐含业务语义
+ * - 结合多轮上下文消歧
+ * - 输出更结构化、更明确的后续查询描述
+ *
+ * 在整个主链路中，它位于证据召回之后、Schema 召回之前，
+ * 是“用户自然语言问题”向“系统可执行问题描述”过渡的一环。
  */
 @Slf4j
 @Component
@@ -46,21 +61,25 @@ public class QueryEnhanceNode implements NodeAction {
 
 	private final JsonParseUtil jsonParseUtil;
 
+	/**
+	 * 执行问题增强。
+	 *
+	 * 返回给 Graph 的不是最终 DTO，而是一条流式生成器：
+	 * - 前端能实时看到“正在进行问题增强”
+	 * - 流结束后再统一把 JSON 结果解析成 `QueryEnhanceOutputDTO`
+	 */
 	@Override
 	public Map<String, Object> apply(OverAllState state) throws Exception {
 
-		// 获取用户输入
 		String userInput = StateUtil.getStringValue(state, INPUT_KEY);
 		log.info("User input for query enhance: {}", userInput);
 
 		String evidence = StateUtil.getStringValue(state, EVIDENCE);
 		String multiTurn = StateUtil.getStringValue(state, MULTI_TURN_CONTEXT, "(无)");
 
-		// 构建查询处理提示
 		String prompt = PromptHelper.buildQueryEnhancePrompt(multiTurn, userInput, evidence);
 		log.debug("Built query enhance prompt as follows \n {} \n", prompt);
 
-		// 调用LLM进行查询处理
 		Flux<ChatResponse> responseFlux = llmService.callUser(prompt);
 
 		Flux<GraphResponse<StreamingOutput>> generator = FluxUtil.createStreamingGenerator(this.getClass(), state,
@@ -68,18 +87,22 @@ public class QueryEnhanceNode implements NodeAction {
 				Flux.just(ChatResponseUtil.createResponse("正在进行问题增强..."),
 						ChatResponseUtil.createPureResponse(TextType.JSON.getStartSign())),
 				Flux.just(ChatResponseUtil.createPureResponse(TextType.JSON.getEndSign()),
-						ChatResponseUtil.createResponse("\n问题增强完成！")),
+						ChatResponseUtil.createResponse("\n问题增强完成")),
 				this::handleQueryEnhance);
 
 		return Map.of(QUERY_ENHANCE_NODE_OUTPUT, generator);
 	}
 
+	/**
+	 * 处理模型返回的问题增强结果。
+	 *
+	 * 这里会先去掉 markdown 包裹，再尝试反序列化成 DTO。
+	 * 如果解析失败，不直接抛异常中断流程，而是返回空 Map，让后续节点按缺省策略继续工作。
+	 */
 	private Map<String, Object> handleQueryEnhance(String llmOutput) {
-		// 获取处理结果
 		String enhanceResult = MarkdownParserUtil.extractRawText(llmOutput.trim());
 		log.info("Query enhance result: {}", enhanceResult);
 
-		// 解析处理结果，转成 QueryProcessOutputDTO
 		QueryEnhanceOutputDTO queryEnhanceOutputDTO = null;
 		try {
 			queryEnhanceOutputDTO = jsonParseUtil.tryConvertToObject(enhanceResult, QueryEnhanceOutputDTO.class);
@@ -89,9 +112,9 @@ public class QueryEnhanceNode implements NodeAction {
 			log.error("Failed to parse query enhance result: {}", enhanceResult, e);
 		}
 
-		if (queryEnhanceOutputDTO == null)
+		if (queryEnhanceOutputDTO == null) {
 			return Map.of();
-		// 返回处理结果
+		}
 		return Map.of(QUERY_ENHANCE_NODE_OUTPUT, queryEnhanceOutputDTO);
 	}
 

@@ -18,17 +18,24 @@ package com.alibaba.cloud.ai.dataagent.workflow.dispatcher;
 import com.alibaba.cloud.ai.dataagent.properties.DataAgentProperties;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.EdgeAction;
+import java.util.Optional;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.Optional;
-
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SEMANTIC_CONSISTENCY_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_GENERATE_COUNT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_GENERATE_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_GENERATE_OUTPUT;
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 
 /**
- * @author zhangshenghang
+ * SQL 生成分发器。
+ *
+ * 这个 Dispatcher 负责消费 `SqlGenerateNode` 的产出，并决定：
+ * - 是否进入语义一致性校验。
+ * - 是否因为生成失败而重试。
+ * - 是否已经触达最大重试次数，从而终止流程。
  */
 @Slf4j
 @Component
@@ -37,28 +44,35 @@ public class SqlGenerateDispatcher implements EdgeAction {
 
 	private final DataAgentProperties properties;
 
+	/**
+ * `apply`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	@Override
 	public String apply(OverAllState state) {
 		Optional<Object> optional = state.value(SQL_GENERATE_OUTPUT);
 		if (optional.isEmpty()) {
 			int currentCount = state.value(SQL_GENERATE_COUNT, properties.getMaxSqlRetryCount());
-			// 生成失败，重新生成
+
+			// 当前节点没有生成出 SQL 结果时，按配置的最大重试次数进行补救。
 			if (currentCount < properties.getMaxSqlRetryCount()) {
 				log.info("SQL 生成失败，开始重试，当前次数: {}", currentCount);
 				return SQL_GENERATE_NODE;
 			}
-			log.error("SQL 生成失败，达到最大重试次数，结束流程");
+			log.error("SQL 生成失败，达到最大重试次数，结束流程。");
 			return END;
 		}
+
 		String sqlGenerateOutput = (String) optional.get();
 		log.info("SQL 生成结果: {}", sqlGenerateOutput);
 
 		if (END.equals(sqlGenerateOutput)) {
-			log.info("检测到流程结束标志: {}", END);
+			log.info("检测到流程终止标志: {}", END);
 			return END;
 		}
 		else {
-			log.info("SQL生成成功，进入语义一致性检查节点: {}", SEMANTIC_CONSISTENCY_NODE);
+			log.info("SQL 生成成功，进入语义一致性检查节点: {}", SEMANTIC_CONSISTENCY_NODE);
 			return SEMANTIC_CONSISTENCY_NODE;
 		}
 	}

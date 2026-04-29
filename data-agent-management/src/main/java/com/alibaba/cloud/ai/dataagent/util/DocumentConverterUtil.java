@@ -161,8 +161,10 @@ public class DocumentConverterUtil {
 	}
 
 	/**
-	 * Private constructor to prevent instantiation.
-	 */
+ * `DocumentConverterUtil`：执行当前类对外暴露的一步核心操作。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	private DocumentConverterUtil() {
 		throw new AssertionError("Cannot instantiate utility class");
 	}

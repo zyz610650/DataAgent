@@ -20,6 +20,12 @@ import com.alibaba.cloud.ai.dataagent.bo.schema.ResultSetBO;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * MdTableGeneratorUtil：通用工具类。
+ *
+ * 它沉淀的是Md表Generator相关的公共处理逻辑，避免同一段代码在多个业务类里重复出现。
+ * 学习时不要只看方法名，更要看输入格式、边界处理和返回结果约定。
+ */
 public class MdTableGeneratorUtil {
 
 	/**

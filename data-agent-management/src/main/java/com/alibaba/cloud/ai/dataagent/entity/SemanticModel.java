@@ -23,12 +23,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Semantic Model Configuration Entity Class
+ * SemanticModel：持久化实体对象。
+ *
+ * 这个类通常和数据库里的语义模型记录对应，字段设计会直接影响 Mapper SQL 和状态保存方式。
+ * 学习时建议重点看状态字段、时间字段，以及哪些字段会被接口层脱敏或忽略。
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class SemanticModel {
 
 	/**
@@ -99,8 +98,10 @@ public class SemanticModel {
 	private LocalDateTime updateTime;
 
 	/**
-	 * 获取用于提示的信息
-	 */
+ * `getPromptInfo`：读取当前场景所需的数据或状态。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	public String getPromptInfo() {
 		return String.format("业务名称: %s, 表名: %s, 数据库字段名: %s, 字段同义词: %s, 业务描述: %s, 数据类型: %s", businessName, tableName,
 				columnName, synonyms, businessDescription, dataType);

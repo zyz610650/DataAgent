@@ -154,8 +154,10 @@ public class BusinessKnowledgeServiceImpl implements BusinessKnowledgeService {
 	}
 
 	/**
-	 * 更新向量库中的知识向量
-	 */
+ * `syncToVectorStore`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	private void syncToVectorStore(BusinessKnowledge knowledge) {
 		// 先删除旧的向量数据
 		this.doDelVector(knowledge);

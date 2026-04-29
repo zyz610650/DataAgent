@@ -96,7 +96,11 @@ public class SemanticModelServiceImpl implements SemanticModelService {
 		return true;
 	}
 
-	/** 根据agentId查找关联的datasourceId 如果有多个数据源，返回第一个启用的数据源 */
+	/**
+ * `findDatasourceIdByAgentId`：按指定条件查询对象或结果列表。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	private Integer findDatasourceIdByAgentId(Long agentId) {
 		List<AgentDatasource> agentDatasources = agentDatasourceMapper.selectByAgentId(agentId);
 

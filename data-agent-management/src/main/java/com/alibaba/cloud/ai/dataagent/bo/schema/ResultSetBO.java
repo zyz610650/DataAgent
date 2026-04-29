@@ -39,6 +39,11 @@ public final class ResultSetBO implements Cloneable {
 	private String errorMsg;
 
 	@Override
+	/**
+ * `clone`：执行当前类对外暴露的一步核心操作。
+ *
+ * 虽然它本身不承载复杂业务，但这个方法会影响对象如何表达、输出或在不同层之间传递。
+ */
 	public ResultSetBO clone() {
 		return ResultSetBO.builder()
 			.column(new ArrayList<>(this.column))

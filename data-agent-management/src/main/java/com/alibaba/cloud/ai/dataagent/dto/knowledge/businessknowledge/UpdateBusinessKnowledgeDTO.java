@@ -26,6 +26,12 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+/**
+ * UpdateBusinessKnowledgeDTO：请求参数或中间结果传输对象。
+ *
+ * 它主要负责承载Update业务知识相关字段，本身不放复杂业务逻辑。
+ * 阅读时重点看字段语义、默认值，以及这些字段最终会在哪一层被消费。
+ */
 public class UpdateBusinessKnowledgeDTO {
 
 	@NotBlank(message = "Business term cannot be empty")

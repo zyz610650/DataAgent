@@ -17,14 +17,18 @@ package com.alibaba.cloud.ai.dataagent.workflow.node;
 
 import com.alibaba.cloud.ai.dataagent.dto.prompt.QueryEnhanceOutputDTO;
 import com.alibaba.cloud.ai.dataagent.mapper.AgentDatasourceMapper;
-import com.alibaba.cloud.ai.graph.GraphResponse;
-import com.alibaba.cloud.ai.graph.OverAllState;
-import com.alibaba.cloud.ai.graph.action.NodeAction;
-import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
 import com.alibaba.cloud.ai.dataagent.service.schema.SchemaService;
 import com.alibaba.cloud.ai.dataagent.util.ChatResponseUtil;
 import com.alibaba.cloud.ai.dataagent.util.FluxUtil;
 import com.alibaba.cloud.ai.dataagent.util.StateUtil;
+import com.alibaba.cloud.ai.graph.GraphResponse;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -32,22 +36,28 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.AGENT_ID;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.COLUMN_DOCUMENTS__FOR_SCHEMA_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.QUERY_ENHANCE_NODE_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SCHEMA_RECALL_NODE_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT;
 
 /**
- * Schema recall node that retrieves relevant database schema information based on
- * keywords and intent.
+ * Schema 召回节点。
  *
- * This node is responsible for: - Recalling relevant tables based on user input -
- * Retrieving column documents based on extracted keywords - Organizing schema information
- * for subsequent processing - Providing streaming feedback during recall process
+ * 这个节点负责把“增强后的自然语言问题”映射成一批候选表和字段文档，供后续表关系推理与 SQL 生成使用。
  *
- * @author zhangshenghang
+ * 主链路位置：
+ * 1. 上游是 `QueryEnhanceNode`，此时问题已经被规范化为更适合检索的表达。
+ * 2. 下游是 `TableRelationNode`，它会基于这里召回出的文档构建结构化 Schema。
+ *
+ * 设计原因：
+ * - 先做表级召回，再按表名拉取字段级文档，可以明显减少噪声。
+ * - 如果直接做全库字段检索，容易把无关字段带入后续 Prompt，导致模型理解偏移。
+ *
+ * 关键依赖：
+ * - `SchemaService`：封装向量检索或索引检索逻辑。
+ * - `AgentDatasourceMapper`：查询当前 Agent 的激活数据源。
  */
 @Slf4j
 @Component
@@ -58,28 +68,35 @@ public class SchemaRecallNode implements NodeAction {
 
 	private final AgentDatasourceMapper agentDatasourceMapper;
 
+	/**
+	 * 执行 Schema 召回。
+	 *
+	 * 返回给 Graph 的对象仍然是 generator，而不是表文档列表本身。
+	 * generator 结束时会把真正的业务结果写入 state：
+	 * - `TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT`
+	 * - `COLUMN_DOCUMENTS__FOR_SCHEMA_OUTPUT`
+	 *
+	 * 这样前端可以实时看到召回过程，而后续节点又能通过状态拿到结构化结果。
+	 */
 	@Override
 	public Map<String, Object> apply(OverAllState state) throws Exception {
-
-		// get input information
 		QueryEnhanceOutputDTO queryEnhanceOutputDTO = StateUtil.getObjectValue(state, QUERY_ENHANCE_NODE_OUTPUT,
 				QueryEnhanceOutputDTO.class);
 		String input = queryEnhanceOutputDTO.getCanonicalQuery();
 		String agentId = StateUtil.getStringValue(state, AGENT_ID);
 
-		// 查询 Agent 的激活数据源
+		// 每个智能体可能绑定多个数据源，但运行态通常只有一个“当前激活数据源”参与本次分析。
 		Integer datasourceId = agentDatasourceMapper.selectActiveDatasourceIdByAgentId(Long.valueOf(agentId));
 
 		if (datasourceId == null) {
 			log.warn("Agent {} has no active datasource", agentId);
-			// 返回空结果
 			String noDataSourceMessage = """
-					\n 该智能体没有激活的数据源
+					\n 该智能体没有激活的数据源。
 
 					这可能是因为：
-					1. 数据源尚未配置或关联。
-					2. 所有数据源都已被禁用。
-					3. 请先配置并激活数据源。
+					1. 数据源尚未配置或未关联到当前智能体。
+					2. 所有关联数据源都被禁用。
+					3. 当前尚未设置激活数据源。
 					流程已终止。
 					""";
 
@@ -88,66 +105,67 @@ public class SchemaRecallNode implements NodeAction {
 				emitter.complete();
 			});
 
+			// 即使失败，也返回一个合法 generator，让前端和 Graph 走统一处理逻辑。
 			Flux<GraphResponse<StreamingOutput>> generator = FluxUtil
-				.createStreamingGeneratorWithMessages(this.getClass(), state, currentState -> {
-					return Map.of(TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT, Collections.emptyList(),
-							COLUMN_DOCUMENTS__FOR_SCHEMA_OUTPUT, Collections.emptyList());
-				}, displayFlux);
+				.createStreamingGeneratorWithMessages(this.getClass(), state, currentState -> Map.of(
+						TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT, Collections.emptyList(),
+						COLUMN_DOCUMENTS__FOR_SCHEMA_OUTPUT, Collections.emptyList()), displayFlux);
 
 			return Map.of(SCHEMA_RECALL_NODE_OUTPUT, generator);
 		}
 
-		// Execute business logic first - recall schema information immediately
+		// 先召回表，再根据命中的表名去拉字段文档，减少字段级检索噪声。
 		List<Document> tableDocuments = new ArrayList<>(
 				schemaService.getTableDocumentsByDatasource(datasourceId, input));
-		// extract table names
 		List<String> recalledTableNames = extractTableName(tableDocuments);
 		List<Document> columnDocuments = schemaService.getColumnDocumentsByTableName(datasourceId, recalledTableNames);
 
 		String failMessage = """
-				\n 未检索到相关数据表
+				\n 未检索到相关数据表。
 
 				这可能是因为：
-				1. 数据源尚未初始化。
-				2. 您的提问与当前数据库中的表结构无关。
-				3. 请尝试点击“初始化数据源”或换一个与业务相关的问题。
-				4. 如果你用A嵌入模型初始化数据源，却更换为B嵌入模型，请重新初始化数据源
+				1. 数据源尚未完成初始化。
+				2. 当前问题与数据库中的业务表结构关联较弱。
+				3. 可以尝试重新初始化数据源，或换一个更贴近业务的问题。
+				4. 如果初始化索引时使用的嵌入模型已经更换，通常需要重新初始化数据源。
 				流程已终止。
 				""";
 
+		// 这里没有真正的 LLM token 流，因此通过 `Flux.create` 手工发出过程提示。
 		Flux<ChatResponse> displayFlux = Flux.create(emitter -> {
-			emitter.next(ChatResponseUtil.createResponse("开始初步召回Schema信息..."));
+			emitter.next(ChatResponseUtil.createResponse("开始初步召回 Schema 信息..."));
 			emitter.next(ChatResponseUtil.createResponse(
-					"初步表信息召回完成，数量: " + tableDocuments.size() + "，表名: " + String.join(", ", recalledTableNames)));
+					"初步表召回完成，数量: " + tableDocuments.size() + "，表名: " + String.join(", ", recalledTableNames)));
 			if (tableDocuments.isEmpty()) {
 				emitter.next(ChatResponseUtil.createResponse(failMessage));
 			}
-			emitter.next(ChatResponseUtil.createResponse("初步Schema信息召回完成."));
+			emitter.next(ChatResponseUtil.createResponse("初步 Schema 召回完成。"));
 			emitter.complete();
 		});
 
 		Flux<GraphResponse<StreamingOutput>> generator = FluxUtil.createStreamingGeneratorWithMessages(this.getClass(),
-				state, currentState -> {
-					return Map.of(TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT, tableDocuments,
-							COLUMN_DOCUMENTS__FOR_SCHEMA_OUTPUT, columnDocuments);
-				}, displayFlux);
+				state, currentState -> Map.of(TABLE_DOCUMENTS_FOR_SCHEMA_OUTPUT, tableDocuments,
+						COLUMN_DOCUMENTS__FOR_SCHEMA_OUTPUT, columnDocuments), displayFlux);
 
-		// Return the processing result
 		return Map.of(SCHEMA_RECALL_NODE_OUTPUT, generator);
 	}
 
+	/**
+	 * 从表文档中提取表名。
+	 *
+	 * `Document` 是 Spring AI 的通用文档对象，正文通常放在 content 中，扩展属性放在 metadata 中。
+	 * 这里约定表名保存在 metadata 的 `name` 字段，因此后续所有 schema 相关服务都依赖这个约定。
+	 */
 	private static List<String> extractTableName(List<Document> tableDocuments) {
 		List<String> tableNames = new ArrayList<>();
-		// metadata中的name字段
 		for (Document document : tableDocuments) {
 			String name = (String) document.getMetadata().get("name");
 			if (name != null && !name.isEmpty()) {
 				tableNames.add(name);
 			}
 		}
-		log.info("At this SchemaRecallNode, Recall tables are: {}", tableNames);
+		log.info("At this SchemaRecallNode, recall tables are: {}", tableNames);
 		return tableNames;
-
 	}
 
 }

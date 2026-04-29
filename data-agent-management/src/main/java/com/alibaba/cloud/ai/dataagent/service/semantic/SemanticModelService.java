@@ -23,6 +23,12 @@ import com.alibaba.cloud.ai.dataagent.vo.BatchImportResult;
 import java.io.InputStream;
 import java.util.List;
 
+/**
+ * SemanticModelService：服务层接口。
+ *
+ * 它定义了语义模型相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
+ */
 public interface SemanticModelService {
 
 	List<SemanticModel> getAll();

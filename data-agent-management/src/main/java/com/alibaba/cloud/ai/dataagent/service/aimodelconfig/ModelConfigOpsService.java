@@ -86,8 +86,10 @@ public class ModelConfigOpsService {
 	}
 
 	/**
-	 * 私有方法：根据实体创建并替换内存代理
-	 */
+ * `refreshMemoryModel`：初始化、装配或刷新当前能力所需的运行时状态。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private void refreshMemoryModel(ModelType type) {
 		if (ModelType.CHAT.equals(type)) {
 			aiModelRegistry.refreshChat();
@@ -101,8 +103,10 @@ public class ModelConfigOpsService {
 	}
 
 	/**
-	 * 测试连接逻辑 注意：这里创建的模型是“临时”的，用完即丢，不会影响当前系统正在运行的模型
-	 */
+ * `testConnection`：校验输入、配置或运行结果是否满足要求。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public void testConnection(ModelConfigDTO config) {
 		String modelType = config.getModelType();
 
@@ -167,8 +171,10 @@ public class ModelConfigOpsService {
 	}
 
 	/**
-	 * 辅助方法：提取更友好的错误信息 Spring AI 抛出的异常有时候嵌套很深
-	 */
+ * `parseErrorMessage`：把输入内容转换成另一种更适合下游消费的结构。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private String parseErrorMessage(Exception e) {
 		// 如果是 401，通常是 Key 错
 		if (e.getMessage().contains("401")) {

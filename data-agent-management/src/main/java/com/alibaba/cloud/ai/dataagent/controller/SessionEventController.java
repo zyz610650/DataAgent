@@ -30,6 +30,12 @@ import org.springframework.http.server.reactive.ServerHttpResponse;
 @CrossOrigin(origins = "*")
 @RequestMapping("/api")
 @RequiredArgsConstructor
+/**
+ * SessionEventController：HTTP 接口入口控制器。
+ *
+ * 它负责接收会话Event相关请求、整理参数、调用下游 Service，并把结果包装成 REST 或 SSE 响应返回前端。
+ * 学习时重点看接口地址、参数来源、参数校验以及最终委派到哪个 Service。
+ */
 public class SessionEventController {
 
 	private final SessionEventPublisher sessionEventPublisher;

@@ -20,10 +20,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Agent Preset Question Entity Class
+ * AgentPresetQuestion：持久化实体对象。
+ *
+ * 这个类通常和数据库里的智能体PresetQuestion记录对应，字段设计会直接影响 Mapper SQL 和状态保存方式。
+ * 学习时建议重点看状态字段、时间字段，以及哪些字段会被接口层脱敏或忽略。
  */
-@Data
-@NoArgsConstructor
 public class AgentPresetQuestion {
 
 	private Long id;

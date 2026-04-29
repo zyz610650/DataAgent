@@ -25,15 +25,18 @@ import java.io.InputStream;
 import java.util.List;
 
 /**
- * Excel解析服务
+ * SemanticModelExcelService：服务层接口。
+ *
+ * 它定义了语义模型Excel相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
  */
-@Service
-@Slf4j
 public class SemanticModelExcelService {
 
 	/**
-	 * 解析Excel文件（从 InputStream）
-	 */
+ * `parseExcel`：把输入内容转换成另一种更适合下游消费的结构。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public List<SemanticModelImportItem> parseExcel(InputStream inputStream, String filename) throws IOException {
 		log.info("开始解析Excel文件: {}", filename);
 

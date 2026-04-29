@@ -16,9 +16,9 @@
 package com.alibaba.cloud.ai.dataagent.workflow.dispatcher;
 
 import com.alibaba.cloud.ai.dataagent.dto.prompt.QueryEnhanceOutputDTO;
+import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.EdgeAction;
-import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import static com.alibaba.cloud.ai.dataagent.constant.Constant.QUERY_ENHANCE_NODE_OUTPUT;
@@ -26,24 +26,33 @@ import static com.alibaba.cloud.ai.dataagent.constant.Constant.SCHEMA_RECALL_NOD
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 
 /**
- * 根据查询增强结果决定下一个节点的分发器
+ * 问题增强分发器。
+ *
+ * 这个 Dispatcher 检查 `QueryEnhanceNode` 生成的结构化问题是否完整。
+ * 只有当增强结果至少包含：
+ * - `canonicalQuery`
+ * - `expandedQueries`
+ *
+ * 工作流才有足够稳定的输入继续进入 Schema 召回阶段。
  */
 @Slf4j
 public class QueryEnhanceDispatcher implements EdgeAction {
 
+	/**
+ * `apply`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	@Override
 	public String apply(OverAllState state) throws Exception {
-		// 获取查询处理结果
 		QueryEnhanceOutputDTO queryProcessOutput = StateUtil.getObjectValue(state, QUERY_ENHANCE_NODE_OUTPUT,
 				QueryEnhanceOutputDTO.class);
 
-		// 检查查询处理结果是否为空
 		if (queryProcessOutput == null) {
 			log.warn("Query process output is null, ending conversation");
 			return END;
 		}
 
-		// 检查各个字段是否为空
 		boolean isCanonicalQueryEmpty = queryProcessOutput.getCanonicalQuery() == null
 				|| queryProcessOutput.getCanonicalQuery().trim().isEmpty();
 		boolean isExpandedQueriesEmpty = queryProcessOutput.getExpandedQueries() == null

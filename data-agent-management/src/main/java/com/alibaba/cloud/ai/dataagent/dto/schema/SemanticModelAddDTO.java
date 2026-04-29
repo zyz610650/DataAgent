@@ -17,16 +17,13 @@ package com.alibaba.cloud.ai.dataagent.dto.schema;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
-/** 添加语义模型的DTO类 */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
+/**
+ * SemanticModelAddDTO：请求参数或中间结果传输对象。
+ *
+ * 它主要负责承载语义模型Add相关字段，本身不放复杂业务逻辑。
+ * 阅读时重点看字段语义、默认值，以及这些字段最终会在哪一层被消费。
+ */
 public class SemanticModelAddDTO {
 
 	/** 关联的智能体ID */

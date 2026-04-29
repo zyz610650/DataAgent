@@ -24,11 +24,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Prompt loader, used to load prompt templates from file system
+ * PromptLoader：提示词装配相关组件。
  *
- * @author zhangshenghang
+ * 它负责维护或拼接提示词Loader相关 Prompt，让模型调用保持可复用、可调试、可配置。
+ * 重点看模板变量来自哪里，以及这些变量分别在哪一步准备好。
  */
-@Slf4j
 public class PromptLoader {
 
 	private static final String PROMPT_PATH_PREFIX = "prompts/";
@@ -55,8 +55,10 @@ public class PromptLoader {
 	}
 
 	/**
-	 * Clear prompt cache
-	 */
+ * `clearCache`：清理临时状态、资源或历史数据。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	public static void clearCache() {
 		promptCache.clear();
 	}

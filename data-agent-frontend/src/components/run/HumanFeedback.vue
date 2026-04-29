@@ -18,8 +18,9 @@
   <div class="human-feedback-area">
     <div class="feedback-header">
       <el-icon><ChatDotRound /></el-icon>
-      <span>请对智能体的计划进行评价</span>
+      <span>请对智能体生成的计划进行评价</span>
     </div>
+
     <div class="feedback-input">
       <el-input
         v-model="feedbackInput"
@@ -30,7 +31,9 @@
         show-word-limit
       />
     </div>
+
     <div class="feedback-actions">
+      <!-- 通过/拒绝都走同一个处理函数，只是传递不同的 rejectedPlan 标志。 -->
       <el-button type="success" @click="submitFeedback(false)">
         <el-icon><Check /></el-icon>
         通过计划
@@ -48,6 +51,18 @@
   import { type GraphRequest } from '../../services/graph';
   import { ChatDotRound, Check, Close } from '@element-plus/icons-vue';
 
+  /**
+   * 人工反馈组件。
+   *
+   * 它是前端接入“人工审核/人工纠偏”能力的最小交互单元：
+   * - 展示一个输入框，让用户补充反馈意见。
+   * - 提供通过/拒绝两个动作按钮。
+   * - 把反馈结果交回父组件，由父组件继续调用后端恢复工作流。
+   *
+   * 注意这里不直接请求后端。
+   * 组件只负责采集交互，真正的恢复执行逻辑由 `handleFeedback` 回调承接，
+   * 这样组件本身保持纯展示和纯事件派发，更容易复用和测试。
+   */
   export default defineComponent({
     name: 'HumanFeedback',
     components: {
@@ -70,11 +85,18 @@
     setup(props) {
       const feedbackInput = ref('');
 
+      /**
+       * 提交人工反馈。
+       *
+       * `rejectedPlan` 为 `true` 表示否决计划；
+       * 为 `false` 表示计划通过、允许继续执行。
+       */
       const submitFeedback = (rejectedPlan: boolean) => {
-        // 准备反馈内容，如果用户输入为空则使用默认值
+        // 如果用户没有填补充意见，则给一个默认文本，方便后端统一处理。
         const feedbackContent = feedbackInput.value.trim() || 'Accept';
         props.handleFeedback(props.request, rejectedPlan, feedbackContent);
-        // 重置输入
+
+        // 提交后立即清空输入框，避免上一次反馈内容残留到下一次审核。
         feedbackInput.value = '';
       };
 
@@ -120,7 +142,6 @@
     justify-content: flex-end;
   }
 
-  /* 响应式设计 */
   @media (max-width: 768px) {
     .feedback-actions {
       flex-direction: column;

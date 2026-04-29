@@ -15,8 +15,9 @@
  */
 package com.alibaba.cloud.ai.dataagent.service.aimodelconfig;
 
-import com.alibaba.cloud.ai.dataagent.enums.ModelType;
 import com.alibaba.cloud.ai.dataagent.dto.ModelConfigDTO;
+import com.alibaba.cloud.ai.dataagent.enums.ModelType;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -27,8 +28,18 @@ import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-
+/**
+ * 当前激活 AI 模型的注册中心。
+ *
+ * 它的职责不是持久化模型配置，而是做“运行时读缓存 + 懒加载实例化”：
+ * - Chat 链路从这里拿 `ChatClient`
+ * - Embedding 链路从这里拿 `EmbeddingModel`
+ *
+ * 为什么需要这个层：
+ * 1. 数据库存的是配置，不是可直接调用的模型实例。
+ * 2. 模型实例化通常比较重，不适合每次请求都重新创建。
+ * 3. 项目支持热切换模型，所以需要一个可刷新缓存的统一入口。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -38,14 +49,25 @@ public class AiModelRegistry {
 
 	private final ModelConfigDataService modelConfigDataService;
 
-	// 缓存对象 (volatile 保证可见性)
+	/**
+	 * volatile 保证不同线程都能看到最新缓存引用。
+	 * 配合双重检查锁，既降低并发开销，也避免重复初始化。
+	 */
 	private volatile ChatClient currentChatClient;
 
 	private volatile EmbeddingModel currentEmbeddingModel;
 
-	// =========================================================
-	// 1. 获取 ChatClient (懒加载 + 缓存)
-	// =========================================================
+	/**
+	 * 获取当前激活的 ChatClient。
+	 *
+	 * 核心策略：
+	 * - 懒加载：第一次真正用到时才初始化
+	 * - 缓存：后续请求直接复用
+	 * - 热刷新：调用 `refreshChat()` 后，下次访问会按最新配置重新初始化
+	 *
+	 * 这里返回的是 `ChatClient` 而不是 `ChatModel`，是因为业务层通常更关心“怎么对话调用”，
+	 * 而不是底层模型细节。
+	 */
 	public ChatClient getChatClient() {
 		if (currentChatClient == null) {
 			synchronized (this) {
@@ -55,7 +77,6 @@ public class AiModelRegistry {
 						ModelConfigDTO config = modelConfigDataService.getActiveConfigByType(ModelType.CHAT);
 						if (config != null) {
 							ChatModel chatModel = modelFactory.createChatModel(config);
-							// 核心：基于新 Model 创建新 Client，彻底消除旧参数缓存
 							currentChatClient = ChatClient.builder(chatModel).build();
 						}
 					}
@@ -63,7 +84,6 @@ public class AiModelRegistry {
 						log.error("Failed to initialize ChatClient: {}", e.getMessage(), e);
 					}
 
-					// 兜底：如果还没初始化成功，抛出运行时异常，提示用户配置
 					if (currentChatClient == null) {
 						throw new RuntimeException(
 								"No active CHAT model configured. Please configure it in the dashboard.");
@@ -74,9 +94,17 @@ public class AiModelRegistry {
 		return currentChatClient;
 	}
 
-	// =========================================================
-	// 2. 获取 EmbeddingModel (懒加载 + Dummy 兜底)
-	// =========================================================
+	/**
+	 * 获取当前激活的 EmbeddingModel。
+	 *
+	 * 和 ChatClient 类似，这里同样是懒加载 + 缓存。
+	 * 但 Embedding 链路多了一层特别处理：当真的没有可用配置时，返回 Dummy 模型而不是直接 null。
+	 *
+	 * 原因：
+	 * - 一些 VectorStore Starter 会在启动期直接调用 `dimensions()`
+	 * - 如果这里返回 null，系统会在 Bean 装配阶段直接失败
+	 * - Dummy 模型的目标不是提供真实能力，而是让系统先启动，再提示用户补配置
+	 */
 	public EmbeddingModel getEmbeddingModel() {
 		if (currentEmbeddingModel == null) {
 			synchronized (this) {
@@ -92,8 +120,6 @@ public class AiModelRegistry {
 						log.error("Failed to initialize EmbeddingModel: {}", e.getMessage());
 					}
 
-					// 兜底：为了防止 VectorStore Starter 启动时调用 dimensions() 报错
-					// 我们必须返回一个"哑巴"模型，而不是 null 或 抛异常
 					if (currentEmbeddingModel == null) {
 						log.warn("Using DummyEmbeddingModel for fallback.");
 						currentEmbeddingModel = new DummyEmbeddingModel();
@@ -104,51 +130,91 @@ public class AiModelRegistry {
 		return currentEmbeddingModel;
 	}
 
-	// =========================================================
-	// 3. 刷新/重置缓存 (用于热切换)
-	// =========================================================
-
+	/**
+	 * 清空 Chat 缓存。
+	 *
+	 * 这不会立即创建新模型，只是让下一次访问时按最新配置重新初始化。
+	 */
 	public void refreshChat() {
 		this.currentChatClient = null;
 		log.info("Chat cache cleared.");
 	}
 
+	/**
+ * `refreshEmbedding`：初始化、装配或刷新当前能力所需的运行时状态。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public void refreshEmbedding() {
 		this.currentEmbeddingModel = null;
 		log.info("Embedding cache cleared.");
 	}
 
-	// =========================================================
-	// 4. 内部类：哑巴嵌入模型 (仅用于启动时防崩)
-	// =========================================================
+	/**
+	 * 启动兜底用的 Dummy Embedding 模型。
+	 *
+	 * 这个内部类的目标不是提供真实 embedding 能力，而是：
+	 * 1. 让依赖 `EmbeddingModel` 的 Starter 能先完成启动
+	 * 2. 在真正发生 embedding 调用时，再以明确错误暴露“尚未配置有效模型”
+	 */
 	private static class DummyEmbeddingModel implements EmbeddingModel {
 
+		/**
+ * `call`：触发一次真正的执行动作，并把结果返回给上游。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 		@Override
 		public EmbeddingResponse call(EmbeddingRequest request) {
 			throw new RuntimeException("No active EMBEDDING model. Please configure it first!");
 		}
 
+		/**
+		 * 对单个 Document 的占位实现。
+		 *
+		 * 返回空向量只是为了满足接口契约，不能用于真实语义检索。
+		 */
 		@Override
 		public float[] embed(Document document) {
 			return new float[0];
 		}
 
+		/**
+ * `embed`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 		@Override
 		public float[] embed(String text) {
 			return new float[0];
 		}
 
+		/**
+ * `embed`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 		@Override
 		public List<float[]> embed(List<String> texts) {
 			return List.of();
 		}
 
+		/**
+ * `embedForResponse`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 		@Override
 		public EmbeddingResponse embedForResponse(List<String> texts) {
 			return null;
 		}
 
-		// 关键：返回一个常用维度 (1536是OpenAI的维度)，骗过向量库的初始化检查
+		/**
+		 * 返回一个兼容启动期校验的默认向量维度。
+		 *
+		 * 这里选择 1536 是因为它是常见 embedding 模型的维度之一，
+		 * 主要目的是尽量降低 Starter 初始化阶段的兼容性问题。
+		 */
 		@Override
 		public int dimensions() {
 			return 1536;

@@ -244,8 +244,10 @@ public class DockerCodePoolExecutorService extends AbstractCodePoolExecutorServi
 	}
 
 	/**
-	 * Create container's HostConfig
-	 */
+ * `createHostConfig`：创建新的业务对象或新记录。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private HostConfig createHostConfig(Path tempDir) {
 		HostConfig config = newHostConfig().withMemory(this.properties.getLimitMemory() * 1024L * 1024L)
 			.withCpuCount(this.properties.getCpuCore())
@@ -268,8 +270,10 @@ public class DockerCodePoolExecutorService extends AbstractCodePoolExecutorServi
 	}
 
 	/**
-	 * Clean up existing container with same name
-	 */
+ * `cleanupExistingResources`：清理临时状态、资源或历史数据。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private void cleanupExistingResources(String containName) {
 		try {
 			// Try to delete container with same name

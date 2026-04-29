@@ -35,24 +35,19 @@ import java.util.concurrent.ConcurrentHashMap;
 public abstract class AbstractDBConnectionPool implements DBConnectionPool {
 
 	/**
-	 * DataSource cache to ensure that each configuration creates DataSource only once.
-	 */
-	private static final ConcurrentHashMap<String, DataSource> DATA_SOURCE_CACHE = new ConcurrentHashMap<>();
-
-	/**
-	 * Driver
-	 */
-	public abstract String getDriver();
-
-	/**
-	 * Error message mapping
-	 */
-	public abstract ErrorCodeEnum errorMapping(String sqlState);
-
+ * `getSelectSchemaSQL`：读取当前场景所需的数据或状态。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	protected String getSelectSchemaSQL(String schema) {
 		return String.format("SELECT count(*) FROM information_schema.schemata WHERE schema_name = '%s'", schema);
 	}
 
+	/**
+ * `ping`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public ErrorCodeEnum ping(DbConfigBO config) {
 		String jdbcUrl = config.getUrl();
 		try (Connection connection = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword());
@@ -78,6 +73,11 @@ public abstract class AbstractDBConnectionPool implements DBConnectionPool {
 		}
 	}
 
+	/**
+ * `getConnection`：读取当前场景所需的数据或状态。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public Connection getConnection(DbConfigBO config) {
 
 		String jdbcUrl = config.getUrl();
@@ -135,17 +135,10 @@ public abstract class AbstractDBConnectionPool implements DBConnectionPool {
 	}
 
 	/**
-	 * Generate cache key based on connection parameters.
-	 * @param url the database URL
-	 * @param username the database username
-	 * @param password the database password
-	 * @return the cache key
-	 */
-	private String generateCacheKey(String url, String username, String password) {
-		return url + "|" + username + "|" + Objects.hashCode(password);
-	}
-
-	@Override
+ * `close`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public void close() {
 		DATA_SOURCE_CACHE.values().forEach(dataSource -> {
 			if (dataSource instanceof DruidDataSource) {

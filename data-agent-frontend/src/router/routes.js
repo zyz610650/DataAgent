@@ -14,15 +14,26 @@
  * limitations under the License.
  */
 
-// 路由模块化配置
+/**
+ * 路由表定义。
+ *
+ * 这个文件只关心“URL 映射到哪个页面组件”，不处理路由守卫或初始化逻辑；
+ * 那些横切逻辑统一放在 `router/index.js` 中，保持职责分离。
+ *
+ * 当前主要业务域：
+ * - `agent`：智能体管理、详情、运行
+ * - `config`：模型配置
+ * - `error`：兜底错误页
+ *
+ * 这里使用的是懒加载写法 `() => import(...)`：
+ * - 优点：按页面分包，首屏加载更轻。
+ * - 代价：首次进入某个页面时会额外触发一次异步模块加载。
+ */
 const routes = [
-  // 首页重定向
   {
     path: '/',
     redirect: '/agents',
   },
-
-  // 智能体管理模块
   {
     path: '/agents',
     name: 'AgentList',
@@ -50,7 +61,6 @@ const routes = [
       module: 'agent',
     },
   },
-
   {
     path: '/agent/:id/run',
     name: 'AgentRun',
@@ -60,8 +70,6 @@ const routes = [
       module: 'agent',
     },
   },
-
-  // 模型配置模块
   {
     path: '/model-config',
     name: 'ModelConfig',
@@ -71,8 +79,6 @@ const routes = [
       module: 'config',
     },
   },
-
-  // 404页面
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',

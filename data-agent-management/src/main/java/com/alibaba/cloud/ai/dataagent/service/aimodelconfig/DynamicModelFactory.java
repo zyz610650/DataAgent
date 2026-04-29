@@ -43,22 +43,43 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.transport.ProxyProvider;
 
+/**
+ * 动态模型工厂。
+ *
+ * 这个类负责把数据库中的“模型配置数据”转成真正可调用的 Spring AI 模型实例。
+ * 在当前项目里，它刻意统一使用 OpenAI 协议适配层：
+ * - 不同厂商通过 `baseUrl` 和路径差异适配
+ * - 上层业务仍然只看到统一的 ChatModel / EmbeddingModel 抽象
+ *
+ * 这样做的好处：
+ * 1. 减少多厂商 SDK 分支代码。
+ * 2. 让自定义兼容 OpenAI 协议的模型服务也能被接入。
+ * 3. 把代理、鉴权、路径定制都集中收敛在一个工厂里。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DynamicModelFactory {
 
 	/**
-	 * 统一使用 OpenAiChatModel，通过 baseUrl 实现多厂商兼容
+	 * 创建聊天模型。
+	 *
+	 * 实现步骤：
+	 * 1. 校验基础配置完整性。
+	 * 2. 构造 `OpenAiApi`，它是底层 HTTP 通信入口。
+	 * 3. 构造 `OpenAiChatOptions`，写入默认模型名、温度、最大 token 等运行选项。
+	 * 4. 返回 `OpenAiChatModel`。
+	 *
+	 * 关键框架 API：
+	 * - `OpenAiApi`：Spring AI 中基于 OpenAI 协议的底层客户端。
+	 * - `OpenAiChatModel`：真正被业务调用的聊天模型实现。
 	 */
 	public ChatModel createChatModel(ModelConfigDTO config) {
 
 		log.info("Creating NEW ChatModel instance. Provider: {}, Model: {}, BaseUrl: {}", config.getProvider(),
 				config.getModelName(), config.getBaseUrl());
-		// 1. 验证参数
 		checkBasic(config);
 
-		// 2. 构建 OpenAiApi (核心通讯对象)
 		String apiKey = StringUtils.hasText(config.getApiKey()) ? config.getApiKey() : "";
 		OpenAiApi.Builder apiBuilder = OpenAiApi.builder()
 			.apiKey(apiKey)
@@ -71,19 +92,20 @@ public class DynamicModelFactory {
 		}
 		OpenAiApi openAiApi = apiBuilder.build();
 
-		// 3. 构建运行时选项 (设置默认的模型名称，如 "deepseek-chat" 或 "gpt-4")
 		OpenAiChatOptions openAiChatOptions = OpenAiChatOptions.builder()
 			.model(config.getModelName())
 			.temperature(config.getTemperature())
 			.maxTokens(config.getMaxTokens())
 			.streamUsage(true)
 			.build();
-		// 4. 返回统一的 OpenAiChatModel
+
 		return OpenAiChatModel.builder().openAiApi(openAiApi).defaultOptions(openAiChatOptions).build();
 	}
 
 	/**
-	 * Embedding 同理
+	 * 创建 Embedding 模型。
+	 *
+	 * 逻辑和 ChatModel 类似，只是目标实现换成了 `OpenAiEmbeddingModel`。
 	 */
 	public EmbeddingModel createEmbeddingModel(ModelConfigDTO config) {
 		log.info("Creating NEW EmbeddingModel instance. Provider: {}, Model: {}, BaseUrl: {}", config.getProvider(),
@@ -107,6 +129,13 @@ public class DynamicModelFactory {
 				RetryUtils.DEFAULT_RETRY_TEMPLATE);
 	}
 
+	/**
+	 * 基础配置校验。
+	 *
+	 * 特殊规则：
+	 * - provider 不是 `custom` 时，要求必须有 apiKey
+	 * - `custom` 模式允许某些本地兼容服务没有真实 API Key
+	 */
 	private static void checkBasic(ModelConfigDTO config) {
 		Assert.hasText(config.getBaseUrl(), "baseUrl must not be empty");
 		if (!"custom".equalsIgnoreCase(config.getProvider())) {
@@ -115,18 +144,24 @@ public class DynamicModelFactory {
 		Assert.hasText(config.getModelName(), "modelName must not be empty");
 	}
 
+	/**
+	 * 构造同步 HTTP 调用使用的 RestClient.Builder，并在需要时接入代理。
+	 *
+	 * 为什么同步和异步要分开：
+	 * - Spring AI 内部既可能走同步调用，也可能走 WebFlux 异步调用
+	 * - 两套客户端使用的底层 HTTP 库不同，所以代理配置也要分别装配
+	 */
 	private RestClient.Builder getProxiedRestClientBuilder(ModelConfigDTO config) {
 		if (config.getProxyEnabled() == null || !config.getProxyEnabled()) {
 			return RestClient.builder();
 		}
 
-		// 打印同步代理日志
-		log.info("【Proxy-Init】Model [{}] is using SYNC proxy -> {}:{}", config.getModelName(), config.getProxyHost(),
+		log.info("[Proxy-Init] Model [{}] is using SYNC proxy -> {}:{}", config.getModelName(), config.getProxyHost(),
 				config.getProxyPort());
 
 		BasicCredentialsProvider credsProvider = new BasicCredentialsProvider();
 		if (StringUtils.hasText(config.getProxyUsername())) {
-			log.info("【Proxy-Auth】Enabling Basic Auth for SYNC proxy, user: {}", config.getProxyUsername());
+			log.info("[Proxy-Auth] Enabling Basic Auth for SYNC proxy, user: {}", config.getProxyUsername());
 			credsProvider.setCredentials(new AuthScope(config.getProxyHost(), config.getProxyPort()),
 					new UsernamePasswordCredentials(config.getProxyUsername(),
 							config.getProxyPassword().toCharArray()));
@@ -140,12 +175,17 @@ public class DynamicModelFactory {
 		return RestClient.builder().requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient));
 	}
 
+	/**
+ * `getProxiedWebClientBuilder`：读取当前场景所需的数据或状态。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private WebClient.Builder getProxiedWebClientBuilder(ModelConfigDTO config) {
 		if (config.getProxyEnabled() == null || !config.getProxyEnabled()) {
 			return WebClient.builder();
 		}
 
-		log.info("【Proxy-Init】Model [{}] is using ASYNC (Netty) proxy -> {}:{}", config.getModelName(),
+		log.info("[Proxy-Init] Model [{}] is using ASYNC (Netty) proxy -> {}:{}", config.getModelName(),
 				config.getProxyHost(), config.getProxyPort());
 
 		HttpClient nettyClient = HttpClient.create().responseTimeout(java.time.Duration.ofMinutes(3)).proxy(p -> {
@@ -154,7 +194,7 @@ public class DynamicModelFactory {
 				.port(config.getProxyPort());
 
 			if (StringUtils.hasText(config.getProxyUsername())) {
-				log.info("【Proxy-Auth】Enabling Basic Auth for ASYNC proxy, user: {}", config.getProxyUsername());
+				log.info("[Proxy-Auth] Enabling Basic Auth for ASYNC proxy, user: {}", config.getProxyUsername());
 				proxyBuilder.username(config.getProxyUsername()).password(s -> config.getProxyPassword());
 			}
 		});

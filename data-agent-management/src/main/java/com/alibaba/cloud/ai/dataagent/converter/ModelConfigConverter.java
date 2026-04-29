@@ -22,11 +22,19 @@ import org.springframework.util.Assert;
 
 import java.time.LocalDateTime;
 
+/**
+ * ModelConfigConverter：对象转换器。
+ *
+ * 它负责在模型配置相关 DTO、Entity、VO 之间做结构转换，避免转换逻辑散落到业务层。
+ * 重点关注字段是否一一对应，以及哪些字段只在某一层存在。
+ */
 public class ModelConfigConverter {
 
 	/**
-	 * Entity -> DTO 用于把数据库数据转给前端看
-	 */
+ * `toDTO`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	public static ModelConfigDTO toDTO(ModelConfig entity) {
 		if (entity == null) {
 			return null;
@@ -52,8 +60,10 @@ public class ModelConfigConverter {
 	}
 
 	/**
-	 * DTO -> Entity 用于新增配置
-	 */
+ * `toEntity`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	public static ModelConfig toEntity(ModelConfigDTO dto) {
 		Assert.notNull(dto, "ModelConfigDTO cannot be null.");
 		ModelConfig entity = new ModelConfig();

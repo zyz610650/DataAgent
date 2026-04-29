@@ -21,17 +21,27 @@ import com.alibaba.cloud.ai.graph.action.EdgeAction;
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 
 /**
- * Dispatcher for human feedback node routing.
+ * 人工反馈分发器。
  *
- * @author Makoto
+ * 这个 Dispatcher 只负责解释 HumanFeedbackNode 写回的 `human_next_node` 状态，
+ * 决定工作流是在人工反馈点暂停，还是继续回到 Planner / PlanExecutor。
+ *
+ * 这里的“暂停”不是特殊节点，而是返回 `END` 让当前图先结束，
+ * 然后等外部请求通过 `updateState(...)` 再从保存的 thread 上恢复执行。
  */
 public class HumanFeedbackDispatcher implements EdgeAction {
 
+	/**
+ * `apply`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	@Override
 	public String apply(OverAllState state) throws Exception {
 		String nextNode = (String) state.value("human_next_node", END);
 
-		// 如果是等待反馈状态，返回END让图暂停
+		// WAIT_FOR_FEEDBACK 表示前端还没提交审批结果。
+		// 当前轮图执行需要先停住，等待外部请求带着 feedback 重新进入恢复流程。
 		if ("WAIT_FOR_FEEDBACK".equals(nextNode)) {
 			return END;
 		}

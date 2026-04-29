@@ -25,14 +25,32 @@
   } from '@element-plus/icons-vue';
   import { ElMessage } from 'element-plus';
 
+  /**
+   * 结果集展示组件。
+   *
+   * 后端 `SqlExecuteNode` 返回的结果不仅有结果集本身，还有一份 `displayStyle`，
+   * 用来告诉前端“更适合以表格还是图表方式展示”。
+   *
+   * 当前组件就是这份结果的统一展示入口：
+   * - 有图表配置时，支持图表 / 表格双视图切换。
+   * - 无图表配置时，退化为纯表格展示。
+   * - 额外提供复制 JSON 数据能力，方便调试和二次使用。
+   */
   const props = defineProps<{
     resultData: ResultData;
     pageSize: number;
   }>();
 
+  // 当前是否处于图表视图。默认值会在 nextTick 后按 showChart 结果自动校正。
   const isChartView = ref(true);
 
-  // 判断是否显示图表
+  /**
+   * 判断当前结果是否适合显示图表。
+   *
+   * 规则来自后端 `displayStyle.type`：
+   * - 没有 type 或 type 为 `table` 时，只显示表格。
+   * - 其他类型表示后端推荐图表展示。
+   */
   const showChart = computed(() => {
     return (
       props.resultData &&
@@ -41,20 +59,23 @@
     );
   });
 
-  // 生成表格HTML
+  /**
+   * 生成纯表格 HTML。
+   *
+   * 这里选择手工拼接 HTML 而不是直接用 `el-table`，主要是为了：
+   * - 让结果块能被统一序列化进消息流展示区域。
+   * - 更容易和现有的富文本 / Markdown 渲染链路兼容。
+   */
   const generateTableHtml = (): string => {
     const resultSet = props.resultData?.resultSet || {};
     const columns = resultSet.column || [];
     const allData = resultSet.data || [];
     const total = allData.length;
     const pageSize = props.pageSize;
-
-    // 分页逻辑
     const totalPages = Math.ceil(total / pageSize);
 
     let tableHtml = `<div class="result-set-container"><div class="result-set-header"><div class="result-set-info"><span>查询结果 (共 ${total} 条记录)</span><div class="result-set-pagination-controls"><span class="result-set-pagination-info">第 <span class="result-set-current-page">1</span> 页，共 ${totalPages} 页</span><div class="result-set-pagination-buttons"><button class="result-set-pagination-btn result-set-pagination-prev" onclick="handleResultSetPagination(this, 'prev')" disabled>上一页</button><button class="result-set-pagination-btn result-set-pagination-next" onclick="handleResultSetPagination(this, 'next')" ${totalPages > 1 ? '' : 'disabled'}>下一页</button></div></div></div></div><div class="result-set-table-container">`;
 
-    // 生成所有页面的表格
     for (let page = 1; page <= totalPages; page++) {
       const startIndex = (page - 1) * pageSize;
       const endIndex = Math.min(startIndex + pageSize, total);
@@ -62,14 +83,12 @@
 
       tableHtml += `<div class="result-set-page ${page === 1 ? 'result-set-page-active' : ''}" data-page="${page}"><table class="result-set-table"><thead><tr>`;
 
-      // 添加表头
       columns.forEach(column => {
         tableHtml += `<th>${escapeHtml(column)}</th>`;
       });
 
       tableHtml += `</tr></thead><tbody>`;
 
-      // 添加表格数据
       if (currentPageData.length === 0) {
         tableHtml += `<tr><td colspan="${columns.length}" class="result-set-empty-cell">暂无数据</td></tr>`;
       } else {
@@ -87,28 +106,33 @@
     }
 
     tableHtml += `</div></div>`;
-
     return tableHtml;
   };
 
-  // HTML转义函数
+  /**
+   * HTML 转义，避免结果集中的文本直接注入 DOM。
+   *
+   * 这是前端展示数据库内容时很重要的一层保护，防止结果数据中带有恶意 HTML 片段。
+   */
   const escapeHtml = (text: string): string => {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
   };
 
-  // 切换到图表视图
   const switchToChart = () => {
     isChartView.value = true;
   };
 
-  // 切换到表格视图
   const switchToTable = () => {
     isChartView.value = false;
   };
 
-  // 复制JSON数据到剪贴板
+  /**
+   * 复制原始 JSON 结果。
+   *
+   * 这对开发调试很有帮助，尤其是验证后端返回结构、排查图表展示异常时。
+   */
   const copyJsonData = () => {
     try {
       const data = props.resultData?.resultSet?.data || [];
@@ -123,14 +147,13 @@
           ElMessage.error('复制失败');
         });
     } catch (err) {
-      console.error('JSON转换失败:', err);
+      console.error('JSON 转换失败:', err);
       ElMessage.error('复制失败');
     }
   };
 
-  // 组件挂载时初始化
+  // 组件挂载后的初始视图由后端 displayStyle 决定。
   nextTick(() => {
-    // 默认显示图表
     isChartView.value = showChart.value;
   });
 </script>
@@ -156,11 +179,11 @@
     查询结果为空
   </div>
   <div v-else class="agent-response-block">
-    <!-- 头部区域 -->
     <div class="agent-response-title result-set-header-bar">
       <div class="agent-response-title">
         {{ resultData.displayStyle?.title || '查询结果' }}
       </div>
+
       <div v-if="showChart" class="buttons-bar">
         <div class="chart-select-container">
           <el-tooltip effect="dark" content="图表" placement="top">
@@ -175,6 +198,7 @@
               </el-icon>
             </el-button>
           </el-tooltip>
+
           <el-tooltip effect="dark" content="表格" placement="top">
             <el-button
               class="tool-btn"
@@ -187,7 +211,8 @@
               </el-icon>
             </el-button>
           </el-tooltip>
-          <el-tooltip effect="dark" content="复制JSON" placement="top">
+
+          <el-tooltip effect="dark" content="复制 JSON" placement="top">
             <el-button class="tool-btn" text @click="copyJsonData">
               <el-icon size="16">
                 <ICON_COPY />
@@ -198,7 +223,6 @@
       </div>
     </div>
 
-    <!-- 显示区域 -->
     <div class="result-show-area">
       <ChartComponent v-if="isChartView && showChart" :resultData="resultData" />
       <div v-else v-html="generateTableHtml()"></div>
@@ -225,12 +249,10 @@
     margin: 8px 0;
   }
 
-  /* 头部样式 */
   .result-set-header-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    //margin-left: 15px;
     margin-bottom: 12px;
     padding: 8px 0;
     border-bottom: 1px solid #ebeef5;
@@ -261,7 +283,6 @@
     color: #409eff;
   }
 
-  /* 显示区域样式 */
   .result-show-area {
     width: 100%;
     min-height: 300px;

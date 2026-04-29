@@ -216,8 +216,10 @@ public class OssFileStorageServiceImpl implements FileStorageService {
 	}
 
 	/**
-	 * 构建OSS对象键
-	 */
+ * `buildObjectKey`：把输入内容转换成另一种更适合下游消费的结构。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	private String buildObjectKey(String subPath, String filename) {
 		StringBuilder keyBuilder = new StringBuilder();
 

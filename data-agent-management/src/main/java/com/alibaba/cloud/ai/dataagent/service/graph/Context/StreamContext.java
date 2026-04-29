@@ -43,8 +43,10 @@ public class StreamContext {
 	private TextType textType;
 
 	/**
-	 * 收集流式输出内容，用于 Langfuse 上报
-	 */
+ * `StringBuilder`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private final StringBuilder outputCollector = new StringBuilder();
 
 	public void appendOutput(String chunk) {
@@ -56,13 +58,17 @@ public class StreamContext {
 	}
 
 	/**
-	 * 标记是否已经清理，用于防止重复清理
-	 */
+ * `AtomicBoolean`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private final AtomicBoolean cleaned = new AtomicBoolean(false);
 
 	/**
-	 * 清理所有资源 线程安全：使用 AtomicBoolean 确保只执行一次
-	 */
+ * `cleanup`：清理临时状态、资源或历史数据。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public void cleanup() {
 		// 使用 compareAndSet 确保只执行一次清理
 		if (!cleaned.compareAndSet(false, true)) {
@@ -93,8 +99,10 @@ public class StreamContext {
 	}
 
 	/**
-	 * 检查是否已经清理
-	 */
+ * `isCleaned`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public boolean isCleaned() {
 		return cleaned.get();
 	}

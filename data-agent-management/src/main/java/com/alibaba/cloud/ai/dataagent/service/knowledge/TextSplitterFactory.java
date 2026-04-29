@@ -27,6 +27,12 @@ import java.util.Map;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+/**
+ * TextSplitterFactory：服务层接口。
+ *
+ * 它定义了Text切分器相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
+ */
 public class TextSplitterFactory {
 
 	private final Map<String, TextSplitter> splitterMap;

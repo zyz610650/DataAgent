@@ -15,22 +15,40 @@
  */
 package com.alibaba.cloud.ai.dataagent.workflow.dispatcher;
 
+import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.EdgeAction;
-import com.alibaba.cloud.ai.dataagent.util.StateUtil;
-
 import java.util.Optional;
 
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.FEASIBILITY_ASSESSMENT_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_RELATION_EXCEPTION_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_RELATION_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_RELATION_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_RELATION_RETRY_COUNT;
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 
+/**
+ * 表关系推理分发器。
+ *
+ * 它负责消费 `TableRelationNode` 写回的状态，并基于以下信息做路由：
+ * - 是否存在异常标记。
+ * - 异常是否允许重试。
+ * - 当前重试次数是否超过上限。
+ * - 是否已经成功产出 `TABLE_RELATION_OUTPUT`。
+ *
+ * 这种“节点负责执行业务，Dispatcher 负责重试和跳转”的拆分，在 Graph 工作流里非常常见。
+ */
 public class TableRelationDispatcher implements EdgeAction {
 
 	private static final int MAX_RETRY_COUNT = 3;
 
+	/**
+ * `apply`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	@Override
 	public String apply(OverAllState state) throws Exception {
-
 		String errorFlag = StateUtil.getStringValue(state, TABLE_RELATION_EXCEPTION_OUTPUT, null);
 		Integer retryCount = StateUtil.getObjectValue(state, TABLE_RELATION_RETRY_COUNT, Integer.class, 0);
 
@@ -48,10 +66,16 @@ public class TableRelationDispatcher implements EdgeAction {
 			return FEASIBILITY_ASSESSMENT_NODE;
 		}
 
-		// no output, end
+		// 没有异常，也没有结果，说明当前轮次无法继续，直接终止。
 		return END;
 	}
 
+	/**
+	 * 当前实现采用轻量文本协议表示“是否允许重试”。
+	 *
+	 * 只要异常字符串以 `RETRYABLE:` 开头，Dispatcher 就认为这是一个可重试失败。
+	 * 这样做的优点是实现成本低，但缺点是协议要靠上下游共同遵守。
+	 */
 	private boolean isRetryableError(String errorMessage) {
 		return errorMessage.startsWith("RETRYABLE:");
 	}

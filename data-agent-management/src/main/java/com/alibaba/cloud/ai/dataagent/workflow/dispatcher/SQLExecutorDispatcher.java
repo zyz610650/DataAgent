@@ -16,28 +16,39 @@
 package com.alibaba.cloud.ai.dataagent.workflow.dispatcher;
 
 import com.alibaba.cloud.ai.dataagent.dto.datasource.SqlRetryDto;
+import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.EdgeAction;
-import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import lombok.extern.slf4j.Slf4j;
 
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.PLAN_EXECUTOR_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_GENERATE_NODE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_REGENERATE_REASON;
 
 /**
- * @author zhangshenghang
+ * SQL 执行分发器。
+ *
+ * SQL 执行节点跑完之后，流程并不会机械地往下走，而是要先看执行结果：
+ * - 如果执行失败且重试 DTO 标记为需要重新生成 SQL，则回到 `SQL_GENERATE_NODE`。
+ * - 否则说明这一步已经完成，回到 `PLAN_EXECUTOR_NODE` 让执行器决定下一步计划。
  */
 @Slf4j
 public class SQLExecutorDispatcher implements EdgeAction {
 
+	/**
+ * `apply`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	@Override
 	public String apply(OverAllState state) {
 		SqlRetryDto retryDto = StateUtil.getObjectValue(state, SQL_REGENERATE_REASON, SqlRetryDto.class);
 		if (retryDto.sqlExecuteFail()) {
-			log.warn("SQL运行失败，需要重新生成！");
+			log.warn("SQL 执行失败，需要重新生成。");
 			return SQL_GENERATE_NODE;
 		}
 		else {
-			log.info("SQL运行成功，返回PlanExecutorNode。");
+			log.info("SQL 执行成功，返回 PlanExecutorNode。");
 			return PLAN_EXECUTOR_NODE;
 		}
 	}

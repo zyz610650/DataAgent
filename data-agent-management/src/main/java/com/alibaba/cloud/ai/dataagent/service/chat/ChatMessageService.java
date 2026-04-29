@@ -19,6 +19,12 @@ import com.alibaba.cloud.ai.dataagent.entity.ChatMessage;
 
 import java.util.List;
 
+/**
+ * ChatMessageService：服务层接口。
+ *
+ * 它定义了对话消息相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
+ */
 public interface ChatMessageService {
 
 	/**

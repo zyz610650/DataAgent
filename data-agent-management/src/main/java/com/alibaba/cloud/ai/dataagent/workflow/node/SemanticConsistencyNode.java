@@ -15,36 +15,42 @@
  */
 package com.alibaba.cloud.ai.dataagent.workflow.node;
 
-import com.alibaba.cloud.ai.dataagent.util.FluxUtil;
-import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.dataagent.dto.datasource.SqlRetryDto;
 import com.alibaba.cloud.ai.dataagent.dto.prompt.SemanticConsistencyDTO;
 import com.alibaba.cloud.ai.dataagent.dto.schema.SchemaDTO;
 import com.alibaba.cloud.ai.dataagent.service.nl2sql.Nl2SqlService;
+import com.alibaba.cloud.ai.dataagent.util.FluxUtil;
+import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.GraphResponse;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.NodeAction;
 import com.alibaba.cloud.ai.graph.streaming.StreamingOutput;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
-import java.util.Map;
-
-import static com.alibaba.cloud.ai.dataagent.constant.Constant.*;
-import static com.alibaba.cloud.ai.dataagent.util.PlanProcessUtil.getCurrentExecutionStepInstruction;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.DB_DIALECT_TYPE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.EVIDENCE;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SEMANTIC_CONSISTENCY_NODE_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_GENERATE_OUTPUT;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.SQL_REGENERATE_REASON;
+import static com.alibaba.cloud.ai.dataagent.constant.Constant.TABLE_RELATION_OUTPUT;
 import static com.alibaba.cloud.ai.dataagent.prompt.PromptHelper.buildMixMacSqlDbPrompt;
+import static com.alibaba.cloud.ai.dataagent.util.PlanProcessUtil.getCurrentExecutionStepInstruction;
 
 /**
- * Semantic consistency validation node that checks SQL query semantic consistency.
+ * 语义一致性校验节点。
  *
- * This node is responsible for: - Validating SQL query semantic consistency against
- * schema and evidence - Providing validation results for query refinement - Handling
- * validation failures with recommendations - Managing step progression in execution plan
+ * SQL 生成完并不代表可以直接执行。除了语法正确，系统还需要确认：
+ * - 这条 SQL 是否真的在回答当前用户问题。
+ * - 字段、过滤条件、聚合逻辑是否与召回到的 Schema 和证据一致。
+ * - 当前 SQL 是否符合执行计划中这一步应完成的任务。
  *
- * @author zhangshenghang
+ * 这一步相当于 SQL 执行前的最后一道语义闸门。
+ * 如果校验不通过，下游 Dispatcher 会把流程重新路由回 SQL 生成节点。
  */
 @Slf4j
 @Component
@@ -53,17 +59,21 @@ public class SemanticConsistencyNode implements NodeAction {
 
 	private final Nl2SqlService nl2SqlService;
 
+	/**
+	 * 执行语义一致性校验。
+	 *
+	 * 这里校验的重点不是 SQL 语法，而是“SQL 与问题是否语义对齐”。
+	 * 例如语法完全正确，但查错了表、漏了条件，依然会在这里被判定为不通过。
+	 */
 	@Override
 	public Map<String, Object> apply(OverAllState state) throws Exception {
-
-		// Get necessary input parameters
 		String evidence = StateUtil.getStringValue(state, EVIDENCE);
 		SchemaDTO schemaDTO = StateUtil.getObjectValue(state, TABLE_RELATION_OUTPUT, SchemaDTO.class);
 		String dialect = StateUtil.getStringValue(state, DB_DIALECT_TYPE);
-		// Get current execution step and SQL query
 		String sql = StateUtil.getStringValue(state, SQL_GENERATE_OUTPUT);
 		String userQuery = StateUtil.getCanonicalQuery(state);
 
+		// 把所有校验上下文一次性打包到 DTO，避免后续服务层依赖零散参数。
 		SemanticConsistencyDTO semanticConsistencyDTO = SemanticConsistencyDTO.builder()
 			.dialect(dialect)
 			.sql(sql)
@@ -73,10 +83,13 @@ public class SemanticConsistencyNode implements NodeAction {
 			.evidence(evidence)
 			.build();
 		log.info("Starting semantic consistency validation - SQL: {}", sql);
+
 		Flux<ChatResponse> validationResultFlux = nl2SqlService.performSemanticConsistency(semanticConsistencyDTO);
 
+		// 返回的 generator 会在前端展示校验过程，并在流结束后将结果落入 state。
 		Flux<GraphResponse<StreamingOutput>> generator = FluxUtil.createStreamingGeneratorWithMessages(this.getClass(),
-				state, "开始语义一致性校验", "语义一致性校验完成", validationResult -> {
+				state, "开始语义一致性校验。", "语义一致性校验完成。", validationResult -> {
+					// 这里依赖提示词约定：以“不通过”开头时表示需要重新生成 SQL。
 					boolean isPassed = !validationResult.startsWith("不通过");
 					Map<String, Object> result = buildValidationResult(isPassed, validationResult);
 					log.info("[{}] Semantic consistency validation result: {}, passed: {}",
@@ -88,7 +101,10 @@ public class SemanticConsistencyNode implements NodeAction {
 	}
 
 	/**
-	 * Build validation result
+	 * 把校验结果翻译成 Graph 状态。
+	 *
+	 * 通过时只需要写一个布尔值给 Dispatcher。
+	 * 不通过时还要把失败原因转成 `SqlRetryDto`，供下一轮 SQL 生成作为修复提示。
 	 */
 	private Map<String, Object> buildValidationResult(boolean passed, String validationResult) {
 		if (passed) {

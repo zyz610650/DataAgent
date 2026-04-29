@@ -59,7 +59,11 @@ public class AgentStartupInitialization implements ApplicationRunner, Disposable
 		}
 	}
 
-	/** Initialize all published agents */
+	/**
+ * `initializePublishedAgents`：初始化、装配或刷新当前能力所需的运行时状态。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private void initializePublishedAgents() {
 		try {
 			List<Agent> publishedAgents = agentService.findByStatus("published");

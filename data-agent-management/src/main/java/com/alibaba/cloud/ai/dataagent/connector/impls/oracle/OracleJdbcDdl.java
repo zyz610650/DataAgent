@@ -36,8 +36,10 @@ import static com.alibaba.cloud.ai.dataagent.util.ColumnTypeUtil.wrapType;
 public class OracleJdbcDdl extends AbstractJdbcDdl {
 
 	/**
-	 * 获取当前用户的 schema，如果参数 schema 为空则使用连接的 schema
-	 */
+ * `getSchema`：读取当前场景所需的数据或状态。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	private String getSchema(Connection connection, String schema) throws SQLException {
 		if (StringUtils.isNotBlank(schema)) {
 			return schema.toUpperCase();

@@ -16,14 +16,27 @@
 import { createApp } from 'vue';
 import App from '@/App.vue';
 import router from '@/router';
-
-// 引入全局样式
 import '@/styles/global.css';
 import 'element-plus/dist/index.css';
 import ElementPlus from 'element-plus';
 
-// 创建应用实例
+/**
+ * 前端应用启动入口。
+ *
+ * 这和后端的 `DataAgentApplication` 作用类似，负责把一堆静态组件、路由和插件真正装配成可运行的单页应用。
+ *
+ * 关键框架 API：
+ * - `createApp(App)`：
+ *   创建 Vue 3 应用实例，`App.vue` 会成为整棵组件树的根节点。
+ * - `app.use(...)`：
+ *   注册插件。这里注册了：
+ *   1. `router`，负责前端页面路由切换。
+ *   2. `ElementPlus`，负责全局注入 UI 组件能力。
+ * - `app.mount('#app')`：
+ *   把 Vue 应用挂载到 `index.html` 里的 DOM 节点上，页面从这一刻开始真正可交互。
+ */
 const app = createApp(App);
+
 app.use(router);
 app.use(ElementPlus);
 app.mount('#app');

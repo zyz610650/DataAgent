@@ -18,9 +18,11 @@ package com.alibaba.cloud.ai.dataagent.enums;
 import lombok.Getter;
 
 /**
- * 知识类型枚举
+ * KnowledgeType：枚举定义。
+ *
+ * 它把知识Type相关的固定取值集中管理，避免状态值散落在各个业务类中硬编码。
+ * 重点关注每个枚举值在参数校验、分支判断和外部协议中的含义。
  */
-@Getter
 public enum KnowledgeType {
 
 	/**
@@ -48,8 +50,10 @@ public enum KnowledgeType {
 	}
 
 	/**
-	 * 根据代码获取枚举
-	 */
+ * `fromCode`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	public static KnowledgeType fromCode(String code) {
 		for (KnowledgeType type : values()) {
 			// 严格比对

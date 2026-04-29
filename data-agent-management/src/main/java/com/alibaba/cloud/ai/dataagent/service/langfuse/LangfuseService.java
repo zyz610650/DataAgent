@@ -29,11 +29,11 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * @author zihenzzz
- * @date 2026/2/16 13:54 基于 OpenTelemetry 的 Langfuse Reporter，用于追踪 LLM 调用
+ * LangfuseService：服务层接口。
+ *
+ * 它定义了Langfuse相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
  */
-@Slf4j
-@Component
 public class LangfuseService {
 
 	private final Tracer tracer;
@@ -74,8 +74,10 @@ public class LangfuseService {
 	}
 
 	/**
-	 * 开始一个 Graph 流式处理的 Span，记录完整的请求上下文
-	 */
+ * `startLLMSpan`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public Span startLLMSpan(String spanName, GraphRequest request) {
 		if (!enabled) {
 			return Span.getInvalid();
@@ -113,8 +115,10 @@ public class LangfuseService {
 	}
 
 	/**
-	 * 累计 token 用量（由 FluxUtil 在处理 ChatResponse 时调用）
-	 */
+ * `accumulateTokens`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public static void accumulateTokens(Object threadId, long promptTokens, long completionTokens) {
 		if (threadId == null) {
 			return;
@@ -129,8 +133,10 @@ public class LangfuseService {
 	}
 
 	/**
-	 * 结束 Span（成功），附带累计的 token 用量
-	 */
+ * `endSpanSuccess`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public void endSpanSuccess(Span span, String threadId, String output) {
 		if (!enabled || span == null || !span.isRecording()) {
 			return;
@@ -150,8 +156,10 @@ public class LangfuseService {
 	}
 
 	/**
-	 * 结束 Span（失败）
-	 */
+ * `endSpanError`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	public void endSpanError(Span span, String threadId, Exception error) {
 		if (!enabled || span == null || !span.isRecording()) {
 			return;
@@ -176,8 +184,10 @@ public class LangfuseService {
 	}
 
 	/**
-	 * 读取并清除累计的 token，写入 span attributes
-	 */
+ * `applyAccumulatedTokens`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它定义的是服务契约，真正的落地逻辑通常在对应的实现类中完成。
+ */
 	private void applyAccumulatedTokens(Span span, String threadId) {
 		if (threadId == null) {
 			return;

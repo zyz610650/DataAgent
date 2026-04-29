@@ -50,6 +50,11 @@ public abstract class AbstractHybridRetrievalStrategy implements HybridRetrieval
 	// 如果你的向量库天然支持混合检索，如Milvus,Es..你可以在子类直接重写该方法不用它这里的流程走
 	// 目前ES实现仍然按照模板流程走，因为ES的付费企业版才能使用它服务端的rrf融合策略
 	@Override
+	/**
+ * `retrieve`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	public List<Document> retrieve(HybridSearchRequest request) {
 
 		SearchRequest vectorSearchRequest = request.toVectorSearchRequest();
@@ -92,6 +97,11 @@ public abstract class AbstractHybridRetrievalStrategy implements HybridRetrieval
 
 	}
 
+	/**
+ * `getDocumentsByKeywords`：按指定条件查询对象或结果列表。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	public abstract List<Document> getDocumentsByKeywords(HybridSearchRequest request);
 
 }

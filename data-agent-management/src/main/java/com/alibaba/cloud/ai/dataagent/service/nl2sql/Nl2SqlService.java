@@ -25,6 +25,12 @@ import reactor.core.publisher.Flux;
 
 import java.util.function.Consumer;
 
+/**
+ * Nl2SqlService：服务层接口。
+ *
+ * 它定义了Nl2SQL相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
+ */
 public interface Nl2SqlService {
 
 	Flux<ChatResponse> performSemanticConsistency(SemanticConsistencyDTO semanticConsistencyDTO);

@@ -21,6 +21,12 @@ import com.alibaba.cloud.ai.dataagent.dto.knowledge.agentknowledge.CreateKnowled
 import com.alibaba.cloud.ai.dataagent.dto.knowledge.agentknowledge.UpdateKnowledgeDTO;
 import com.alibaba.cloud.ai.dataagent.vo.AgentKnowledgeVO;
 
+/**
+ * AgentKnowledgeService：服务层接口。
+ *
+ * 它定义了智能体知识相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
+ */
 public interface AgentKnowledgeService {
 
 	AgentKnowledgeVO getKnowledgeById(Integer id);

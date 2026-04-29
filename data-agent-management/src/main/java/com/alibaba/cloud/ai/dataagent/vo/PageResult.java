@@ -24,6 +24,12 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+/**
+ * PageResult：接口返回视图对象。
+ *
+ * 它把内部PageResult结果整理成更适合前端或调用方读取的输出结构。
+ * 学习这类类时，重点关注哪些字段是展示用、哪些字段承担流程控制作用。
+ */
 public class PageResult<T> {
 
 	/**
@@ -52,8 +58,10 @@ public class PageResult<T> {
 	private Integer totalPages;
 
 	/**
-	 * 计算总页数
-	 */
+ * `calculateTotalPages`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	public void calculateTotalPages() {
 		if (this.total != null && this.pageSize != null && this.pageSize > 0) {
 			this.totalPages = (int) Math.ceil((double) this.total / this.pageSize);

@@ -19,6 +19,12 @@ import com.alibaba.cloud.ai.dataagent.properties.DataAgentProperties;
 import org.springframework.stereotype.Component;
 
 @Component
+/**
+ * ReportTemplateUtil：通用工具类。
+ *
+ * 它沉淀的是报告Template相关的公共处理逻辑，避免同一段代码在多个业务类里重复出现。
+ * 学习时不要只看方法名，更要看输入格式、边界处理和返回结果约定。
+ */
 public class ReportTemplateUtil {
 
 	private final DataAgentProperties dataAgentProperties;
@@ -240,8 +246,10 @@ public class ReportTemplateUtil {
 			}""";
 
 	/**
-	 * 获取动态组装后的 Header CSS 中经常会出现百分号 %（例如 width: 100%;）所以用 .replace 而不是 String.format
-	 */
+ * `getHeader`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public String getHeader() {
 		// 执行替换
 		return REPORT_TEMPLATE_HEADER.replace("{{MARKED_URL}}", dataAgentProperties.getReportTemplate().getMarkedUrl())
@@ -249,8 +257,10 @@ public class ReportTemplateUtil {
 	}
 
 	/**
-	 * 获取 Footer
-	 */
+ * `getFooter`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public String getFooter() {
 		return REPORT_TEMPLATE_FOOTER;
 	}

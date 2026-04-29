@@ -28,13 +28,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * Manages multi-turn dialogue context for each thread. The context keeps a lightweight
- * history of user questions and the corresponding planner outputs so downstream prompts
- * can reference prior turns.
+ * MultiTurnContextManager：服务层接口。
+ *
+ * 它定义了多轮轮次上下文Manager相关能力的对外契约，让上层只依赖抽象，不直接绑定具体实现。
+ * 先看接口可以快速建立能力全貌，再回实现类看细节。
  */
-@Slf4j
-@Component
-@AllArgsConstructor
 public class MultiTurnContextManager {
 
 	private final DataAgentProperties properties;

@@ -21,9 +21,11 @@ import org.apache.ibatis.annotations.*;
 import java.util.List;
 
 /**
- * 逻辑外键配置 Mapper 接口
+ * LogicalRelationMapper：MyBatis 数据访问接口。
+ *
+ * 它负责把逻辑关联相关的增删改查动作落到具体 SQL 上，是 Service 层和数据库之间最直接的一层。
+ * 阅读 Mapper 时，最好把方法名、SQL 条件和返回对象类型放在一起理解。
  */
-@Mapper
 public interface LogicalRelationMapper {
 
 	/**

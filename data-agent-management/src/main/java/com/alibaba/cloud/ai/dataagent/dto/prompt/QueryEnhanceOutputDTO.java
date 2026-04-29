@@ -25,6 +25,12 @@ import java.util.List;
 // 对应 模板query-enhancement.txt的输出
 @Data
 @NoArgsConstructor
+/**
+ * QueryEnhanceOutputDTO：请求参数或中间结果传输对象。
+ *
+ * 它主要负责承载QueryEnhanceOutput相关字段，本身不放复杂业务逻辑。
+ * 阅读时重点看字段语义、默认值，以及这些字段最终会在哪一层被消费。
+ */
 public class QueryEnhanceOutputDTO {
 
 	// 经LLM重写后的 规范化查询

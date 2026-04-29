@@ -29,22 +29,67 @@ import java.util.List;
 public abstract class AbstractJdbcDdl implements Ddl {
 
 	@Deprecated
+	/**
+ * `showDatabases`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract List<DatabaseInfoBO> showDatabases(Connection connection);
 
+	/**
+ * `showSchemas`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract List<SchemaInfoBO> showSchemas(Connection connection);
 
+	/**
+ * `showTables`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract List<TableInfoBO> showTables(Connection connection, String schema, String tablePattern);
 
+	/**
+ * `fetchTables`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract List<TableInfoBO> fetchTables(Connection connection, String schema, List<String> tables);
 
+	/**
+ * `showColumns`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract List<ColumnInfoBO> showColumns(Connection connection, String schema, String table);
 
+	/**
+ * `showForeignKeys`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract List<ForeignKeyInfoBO> showForeignKeys(Connection connection, String schema, List<String> tables);
 
+	/**
+ * `sampleColumn`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract List<String> sampleColumn(Connection connection, String schema, String table, String column);
 
+	/**
+ * `scanTable`：执行当前类对外暴露的一步核心操作。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public abstract ResultSetBO scanTable(Connection connection, String schema, String table);
 
+	/**
+ * `getSelectSql`：读取当前场景所需的数据或状态。
+ *
+ * 它位于底层适配层，目标是把统一抽象翻译成具体数据库或执行环境可以理解的动作。
+ */
 	public String getSelectSql(String typeName, String tableName, String columnNames, int limit) {
 		return SqlUtil.buildSelectSql(typeName, tableName, columnNames, limit);
 	}

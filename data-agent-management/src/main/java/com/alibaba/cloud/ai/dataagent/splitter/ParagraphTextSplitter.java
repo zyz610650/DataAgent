@@ -42,8 +42,10 @@ public class ParagraphTextSplitter extends TextSplitter {
 	private final int paragraphOverlapChars;
 
 	/**
-	 * 段落分隔符：至少两个连续的换行符
-	 */
+ * `compile`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private static final Pattern PARAGRAPH_PATTERN = Pattern.compile("\\n\\s*\\n+");
 
 	private static final Pattern sentencePattern = Pattern.compile("[^。！？.!?\\n]+[。！？.!?\\n]*");
@@ -142,8 +144,10 @@ public class ParagraphTextSplitter extends TextSplitter {
 	}
 
 	/**
-	 * 从已完成的块中提取 overlap 内容 策略：尝试智能贴合段落边界，如果找不到段落边界，则硬截取
-	 */
+ * `extractOverlap`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private StringBuilder extractOverlap(String chunk) {
 		if (paragraphOverlapChars <= 0 || chunk == null || chunk.isEmpty()) {
 			return new StringBuilder();
@@ -174,8 +178,10 @@ public class ParagraphTextSplitter extends TextSplitter {
 	}
 
 	/**
-	 * 切分过大的段落 (逻辑保持不变，你的实现已经很好了)
-	 */
+ * `splitLargeParagraph`：执行当前类对外暴露的一步核心操作。
+ *
+ * 阅读这个方法时，建议同时关注它依赖了什么输入，以及结果最后会被哪一层继续消费。
+ */
 	private List<String> splitLargeParagraph(String paragraph) {
 		List<String> subChunks = new ArrayList<>();
 

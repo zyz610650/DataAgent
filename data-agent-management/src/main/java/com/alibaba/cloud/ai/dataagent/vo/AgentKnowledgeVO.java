@@ -26,6 +26,12 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+/**
+ * AgentKnowledgeVO：接口返回视图对象。
+ *
+ * 它把内部智能体知识结果整理成更适合前端或调用方读取的输出结构。
+ * 学习这类类时，重点关注哪些字段是展示用、哪些字段承担流程控制作用。
+ */
 public class AgentKnowledgeVO {
 
 	private Integer id;

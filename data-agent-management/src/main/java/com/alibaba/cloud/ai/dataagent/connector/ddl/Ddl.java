@@ -17,6 +17,12 @@ package com.alibaba.cloud.ai.dataagent.connector.ddl;
 
 import com.alibaba.cloud.ai.dataagent.enums.BizDataSourceTypeEnum;
 
+/**
+ * Ddl：底层连接或方言适配组件。
+ *
+ * 它负责把统一的DDL调用抽象转换成具体数据库、连接池、DDL 或执行动作。
+ * 阅读时重点看统一接口如何落到不同数据库实现上。
+ */
 public interface Ddl {
 
 	BizDataSourceTypeEnum getDataSourceType();

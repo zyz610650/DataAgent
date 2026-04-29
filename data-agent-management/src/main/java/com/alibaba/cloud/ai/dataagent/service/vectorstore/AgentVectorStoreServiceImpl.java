@@ -17,10 +17,18 @@ package com.alibaba.cloud.ai.dataagent.service.vectorstore;
 
 import com.alibaba.cloud.ai.dataagent.constant.Constant;
 import com.alibaba.cloud.ai.dataagent.constant.DocumentMetadataConstant;
-import com.alibaba.cloud.ai.dataagent.properties.DataAgentProperties;
 import com.alibaba.cloud.ai.dataagent.dto.search.AgentSearchRequest;
 import com.alibaba.cloud.ai.dataagent.dto.search.HybridSearchRequest;
+import com.alibaba.cloud.ai.dataagent.properties.DataAgentProperties;
 import com.alibaba.cloud.ai.dataagent.service.hybrid.retrieval.HybridRetrievalStrategy;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -30,14 +38,33 @@ import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 
-import java.util.*;
-
 import static com.alibaba.cloud.ai.dataagent.service.vectorstore.DynamicFilterService.buildFilterExpressionString;
 
+/**
+ * 智能体向量库服务实现。
+ *
+ * 这是业务层和 Spring AI `VectorStore` 抽象之间的核心适配层，负责：
+ * 1. 根据 agentId、文档类型等业务条件组装过滤表达式
+ * 2. 决定走纯向量检索还是混合检索
+ * 3. 批量添加和删除向量文档
+ * 4. 屏蔽不同 VectorStore 实现之间的行为差异
+ *
+ * 关键框架 API：
+ * - `VectorStore`：
+ *   Spring AI 对向量数据库的统一抽象。
+ * - `SearchRequest`：
+ *   检索请求对象，封装 query、topK、similarityThreshold、filterExpression 等参数。
+ * - `Filter.Expression`：
+ *   元数据过滤条件表达式，用来把“只搜某个 Agent 的某类文档”这种业务条件下推到向量库。
+ */
 @Slf4j
 @Service
 public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 
+	/**
+	 * 某些 VectorStore 实现不支持空 query，因此这里统一使用一个占位默认词。
+	 * 当我们只想按 filter 删文档或查文档时，就用它来满足底层接口要求。
+	 */
 	private static final String DEFAULT = "default";
 
 	private final VectorStore vectorStore;
@@ -58,6 +85,14 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 		log.info("VectorStore type: {}", vectorStore.getClass().getSimpleName());
 	}
 
+	/**
+	 * 按 Agent 维度检索文档。
+	 *
+	 * 核心流程：
+	 * 1. 根据 agentId 和 docVectorType 生成动态过滤条件。
+	 * 2. 如果开启混合检索且策略存在，则走 hybrid retrieval。
+	 * 3. 否则回退到纯向量检索。
+	 */
 	@Override
 	public List<Document> search(AgentSearchRequest searchRequest) {
 		Assert.hasText(searchRequest.getAgentId(), "AgentId cannot be empty");
@@ -65,7 +100,6 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 
 		Filter.Expression filter = dynamicFilterService.buildDynamicFilter(searchRequest.getAgentId(),
 				searchRequest.getDocVectorType());
-		// 根据agentId vectorType找不到要 召回 的业务知识或者智能体知识
 		if (filter == null) {
 			log.warn(
 					"Dynamic filter returned null (no valid ids), returning empty result directly.AgentId: {}, VectorType: {}",
@@ -88,9 +122,13 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 		log.debug("Search completed with vectorType: {}, found {} documents for SearchRequest: {}",
 				searchRequest.getDocVectorType(), results.size(), searchRequest);
 		return results;
-
 	}
 
+	/**
+ * `deleteDocumentsByVectorType`：删除对象、解绑关系，或清理不再需要的数据。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	@Override
 	public Boolean deleteDocumentsByVectorType(String agentId, String vectorType) throws Exception {
 		Assert.notNull(agentId, "AgentId cannot be null.");
@@ -102,26 +140,28 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 		return this.deleteDocumentsByMetedata(agentId, metadata);
 	}
 
+	/**
+	 * 批量写入文档到向量库。
+	 *
+	 * 这里会先按文档类型校验 metadata 是否齐全，
+	 * 因为向量库删除、过滤、召回都强依赖这些元数据。
+	 */
 	@Override
 	public void addDocuments(String agentId, List<Document> documents) {
 		Assert.notNull(agentId, "AgentId cannot be null.");
 		Assert.notEmpty(documents, "Documents cannot be empty.");
 
-		// 验证文档中 metadata 的一致性
 		for (Document document : documents) {
 			Assert.notNull(document.getMetadata(), "Document metadata cannot be null.");
 
 			String vectorType = (String) document.getMetadata().get(DocumentMetadataConstant.VECTOR_TYPE);
 
-			// 根据 vectorType 验证不同的字段
 			if (DocumentMetadataConstant.TABLE.equals(vectorType)
 					|| DocumentMetadataConstant.COLUMN.equals(vectorType)) {
-				// 表和列必须包含 datasourceId
 				Assert.isTrue(document.getMetadata().containsKey(Constant.DATASOURCE_ID),
 						"Document metadata must contain datasourceId for TABLE/COLUMN type.");
 			}
 			else {
-				// 知识库和业务术语必须包含 agentId
 				Assert.isTrue(document.getMetadata().containsKey(Constant.AGENT_ID),
 						"Document metadata must contain agentId.");
 				Assert.isTrue(document.getMetadata().get(Constant.AGENT_ID).equals(agentId),
@@ -131,6 +171,11 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 		vectorStore.add(documents);
 	}
 
+	/**
+ * `deleteDocumentsByMetadata`：删除对象、解绑关系，或清理不再需要的数据。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	@Override
 	public Boolean deleteDocumentsByMetadata(Map<String, Object> metadata) {
 		Assert.notNull(metadata, "Metadata cannot be null.");
@@ -146,17 +191,20 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 		return true;
 	}
 
+	/**
+	 * 按 agentId + metadata 删除文档。
+	 *
+	 * 这里会强制补上 agentId 过滤条件，避免调用方漏传导致误删其他 Agent 的文档。
+	 */
 	@Override
 	public Boolean deleteDocumentsByMetedata(String agentId, Map<String, Object> metadata) {
 		Assert.hasText(agentId, "AgentId cannot be empty.");
 		Assert.notNull(metadata, "Metadata cannot be null.");
-		// 添加agentId元数据过滤条件, 用于删除指定agentId下的所有数据，因为metadata中用户调用可能忘记添加agentId
 		metadata.put(Constant.AGENT_ID, agentId);
 		String filterExpression = buildFilterExpressionString(metadata);
 
-		// es的可以直接元数据删除
 		if (vectorStore instanceof SimpleVectorStore) {
-			// 目前SimpleVectorStore不支持通过元数据删除，使用会抛出UnsupportedOperationException,现在是通过id删除
+			// SimpleVectorStore 目前不支持直接按 metadata 删除，所以退化成“查出 id 再批量删”。
 			batchDelDocumentsWithFilter(filterExpression);
 		}
 		else {
@@ -166,54 +214,64 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 		return true;
 	}
 
+	/**
+	 * 对不支持 metadata 删除的向量库做“查出 ID 再删除”的批处理降级。
+	 *
+	 * 这里要分批查，是因为部分向量数据库对 topK 有上限。
+	 */
 	private void batchDelDocumentsWithFilter(String filterExpression) {
 		Set<String> seenDocumentIds = new HashSet<>();
-		// 分批获取，因为Milvus等向量数据库的topK有限制
 		List<Document> batch;
 		int newDocumentsCount;
 		int totalDeleted = 0;
 
 		do {
-			batch = vectorStore.similaritySearch(org.springframework.ai.vectorstore.SearchRequest.builder()
-				.query(DEFAULT)// 使用默认的查询字符串，因为有的嵌入模型不支持空字符串
+			batch = vectorStore.similaritySearch(SearchRequest.builder()
+				.query(DEFAULT)
 				.filterExpression(filterExpression)
-				.similarityThreshold(0.0)// 设置最低相似度阈值以获取元数据匹配的所有文档
+				.similarityThreshold(0.0)
 				.topK(dataAgentProperties.getVectorStore().getBatchDelTopkLimit())
 				.build());
 
-			// 过滤掉已经处理过的文档，只删除未处理的文档
 			List<String> idsToDelete = new ArrayList<>();
 			newDocumentsCount = 0;
 
 			for (Document doc : batch) {
 				if (seenDocumentIds.add(doc.getId())) {
-					// 如果add返回true，表示这是一个新的文档ID
 					idsToDelete.add(doc.getId());
 					newDocumentsCount++;
 				}
 			}
 
-			// 删除这批新文档
 			if (!idsToDelete.isEmpty()) {
 				vectorStore.delete(idsToDelete);
 				totalDeleted += idsToDelete.size();
 			}
 
 		}
-		while (newDocumentsCount > 0); // 只有当获取到新文档时才继续循环
+		while (newDocumentsCount > 0);
 
 		log.info("Deleted {} documents with filter expression: {}", totalDeleted, filterExpression);
 	}
 
+	/**
+ * `getDocumentsForAgent`：读取当前场景所需的数据或状态。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	@Override
 	public List<Document> getDocumentsForAgent(String agentId, String query, String vectorType) {
-		// 使用全局默认配置
 		int defaultTopK = dataAgentProperties.getVectorStore().getDefaultTopkLimit();
 		double defaultThreshold = dataAgentProperties.getVectorStore().getDefaultSimilarityThreshold();
 
 		return getDocumentsForAgent(agentId, query, vectorType, defaultTopK, defaultThreshold);
 	}
 
+	/**
+ * `getDocumentsForAgent`：读取当前场景所需的数据或状态。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	@Override
 	public List<Document> getDocumentsForAgent(String agentId, String query, String vectorType, int topK,
 			double threshold) {
@@ -221,17 +279,23 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 			.agentId(agentId)
 			.docVectorType(vectorType)
 			.query(query)
-			.topK(topK) // 使用传入的参数
-			.similarityThreshold(threshold) // 使用传入的参数
+			.topK(topK)
+			.similarityThreshold(threshold)
 			.build();
 		return search(searchRequest);
 	}
 
+	/**
+ * `getDocumentsOnlyByFilter`：按指定条件查询对象或结果列表。
+ *
+ * 它处在服务层，常见上游是 Controller、Workflow 节点或事件监听器，下游则可能是 Mapper、模型服务或外部组件。
+ */
 	@Override
 	public List<Document> getDocumentsOnlyByFilter(Filter.Expression filterExpression, Integer topK) {
 		Assert.notNull(filterExpression, "filterExpression cannot be null.");
-		if (topK == null)
+		if (topK == null) {
 			topK = dataAgentProperties.getVectorStore().getDefaultTopkLimit();
+		}
 		SearchRequest searchRequest = SearchRequest.builder()
 			.query(DEFAULT)
 			.topK(topK)
@@ -241,13 +305,17 @@ public class AgentVectorStoreServiceImpl implements AgentVectorStoreService {
 		return vectorStore.similaritySearch(searchRequest);
 	}
 
+	/**
+	 * 判断某个 Agent 是否已经写入过任何向量文档。
+	 *
+	 * 这里只查 1 条，目的不是拿结果，而是快速做存在性判断。
+	 */
 	@Override
 	public boolean hasDocuments(String agentId) {
-		// 类似 MySQL 的 LIMIT 1,只检查是否存在文档
-		List<Document> docs = vectorStore.similaritySearch(org.springframework.ai.vectorstore.SearchRequest.builder()
-			.query(DEFAULT)// 使用默认的查询字符串，因为有的嵌入模型不支持空字符串
+		List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
+			.query(DEFAULT)
 			.filterExpression(buildFilterExpressionString(Map.of(Constant.AGENT_ID, agentId)))
-			.topK(1) // 只获取1个文档
+			.topK(1)
 			.similarityThreshold(0.0)
 			.build());
 		return !docs.isEmpty();

@@ -38,8 +38,10 @@ public class StateUtil {
 	private static final ObjectMapper OBJECT_MAPPER = JsonUtil.getObjectMapper();
 
 	/**
-	 * Safely get string type state value
-	 */
+ * `getStringValue`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static String getStringValue(OverAllState state, String key) {
 		return state.value(key)
 			.map(String.class::cast)
@@ -47,8 +49,10 @@ public class StateUtil {
 	}
 
 	/**
-	 * Safely get string type state value with default value
-	 */
+ * `getStringValue`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static String getStringValue(OverAllState state, String key, String defaultValue) {
 		return state.value(key).map(String.class::cast).orElse(defaultValue);
 	}
@@ -64,8 +68,10 @@ public class StateUtil {
 	}
 
 	/**
-	 * Safely get object type state value
-	 */
+ * `getObjectValue`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static <T> T getObjectValue(OverAllState state, String key, Class<T> type) {
 		return state.value(key)
 			.map(value -> deserializeIfNeeded(value, type))
@@ -73,15 +79,19 @@ public class StateUtil {
 	}
 
 	/**
-	 * Safely get object type state value with default value
-	 */
+ * `getObjectValue`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static <T> T getObjectValue(OverAllState state, String key, Class<T> type, T defaultValue) {
 		return state.value(key).map(value -> deserializeIfNeeded(value, type)).orElse(defaultValue);
 	}
 
 	/**
-	 * Handle deserialization of HashMap to target type when needed
-	 */
+ * `deserializeIfNeeded`：执行当前类对外暴露的一步核心操作。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	private static <T> T deserializeIfNeeded(Object value, Class<T> type) {
 		// If already the correct type, return as-is
 		if (type.isInstance(value)) {
@@ -97,15 +107,19 @@ public class StateUtil {
 	}
 
 	/**
-	 * Safely get object type state value with default value supplier
-	 */
+ * `getObjectValue`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static <T> T getObjectValue(OverAllState state, String key, Class<T> type, Supplier<T> defaultSupplier) {
 		return state.value(key).map(type::cast).orElseGet(defaultSupplier);
 	}
 
 	/**
-	 * Check if state value exists
-	 */
+ * `hasValue`：执行当前类对外暴露的一步核心操作。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static boolean hasValue(OverAllState state, String key) {
 		Optional<Object> value = state.value(key);
 		if (value.isPresent()) {
@@ -118,15 +132,19 @@ public class StateUtil {
 	}
 
 	/**
-	 * Get Document list
-	 */
+ * `getDocumentList`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static List<Document> getDocumentList(OverAllState state, String key) {
 		return getListValue(state, key);
 	}
 
 	/**
-	 * Get canonical query
-	 */
+ * `getCanonicalQuery`：读取当前场景所需的数据或状态。
+ *
+ * 这类工具方法通常会被多个业务类复用，阅读时要特别留意输入格式、边界处理和异常策略。
+ */
 	public static String getCanonicalQuery(OverAllState state) {
 		QueryEnhanceOutputDTO queryEnhanceOutputDTO = getObjectValue(state, QUERY_ENHANCE_NODE_OUTPUT,
 				QueryEnhanceOutputDTO.class);

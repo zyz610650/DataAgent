@@ -32,6 +32,7 @@
       </div>
 
       <div v-else class="questions-list">
+        <!-- 每个问题都是一个可点击的快捷入口，父组件会把它直接放入提问框或触发发送。 -->
         <div
           v-for="question in activeQuestions"
           :key="question.id"
@@ -52,6 +53,20 @@
   import { ChatLineRound, ArrowRight, Loading } from '@element-plus/icons-vue';
   import PresetQuestionService, { type PresetQuestion } from '@/services/presetQuestion';
 
+  /**
+   * 预设问题组件。
+   *
+   * 这个组件的目标是降低首次提问门槛：
+   * - 把后台配置好的“示例问题”展示出来。
+   * - 用户点击即可快速触发提问，而不必自己从空白输入框开始想。
+   *
+   * 数据来源：
+   * - 通过 `PresetQuestionService.list(agentId)` 拉取指定智能体的预设问题。
+   *
+   * 交互方式：
+   * - 组件不直接控制聊天发送逻辑。
+   * - 它只把被点击的问题文本通过 `onQuestionClick` 回调抛给父组件。
+   */
   export default defineComponent({
     name: 'PresetQuestions',
     components: {
@@ -72,10 +87,15 @@
     setup(props) {
       const questions = ref<PresetQuestion[]>([]);
       const loading = ref(false);
+
+      // 后端可能返回已禁用的问题项，因此前端再做一次“只显示激活项”的过滤。
       const activeQuestions = computed(() => {
         return questions.value.filter(q => q.isActive !== false);
       });
 
+      /**
+       * 拉取当前智能体的预设问题列表。
+       */
       const loadPresetQuestions = async () => {
         loading.value = true;
         try {
@@ -87,6 +107,9 @@
         }
       };
 
+      /**
+       * 把被点击的问题文本透传给父组件。
+       */
       const handleQuestionClick = (question: PresetQuestion) => {
         if (props.onQuestionClick) {
           props.onQuestionClick(question.question);

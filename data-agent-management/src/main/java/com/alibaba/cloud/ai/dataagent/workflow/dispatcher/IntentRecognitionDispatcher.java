@@ -16,9 +16,9 @@
 package com.alibaba.cloud.ai.dataagent.workflow.dispatcher;
 
 import com.alibaba.cloud.ai.dataagent.dto.prompt.IntentRecognitionOutputDTO;
+import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import com.alibaba.cloud.ai.graph.OverAllState;
 import com.alibaba.cloud.ai.graph.action.EdgeAction;
-import com.alibaba.cloud.ai.dataagent.util.StateUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import static com.alibaba.cloud.ai.dataagent.constant.Constant.EVIDENCE_RECALL_NODE;
@@ -26,14 +26,27 @@ import static com.alibaba.cloud.ai.dataagent.constant.Constant.INTENT_RECOGNITIO
 import static com.alibaba.cloud.ai.graph.StateGraph.END;
 
 /**
- * 根据意图识别结果决定下一个节点的分发器
+ * 意图识别分发器。
+ *
+ * `EdgeAction` 是 Graph 框架中的“条件边”接口，返回值就是下一跳节点名。
+ * 当前类只做一件事：读取意图识别结果，然后决定主链路是否继续。
+ *
+ * 分层价值：
+ * - Node 负责执行识别。
+ * - Dispatcher 负责解释识别结果并做路由。
+ * 这样节点逻辑和分支逻辑不会混在一起。
  */
 @Slf4j
 public class IntentRecognitionDispatcher implements EdgeAction {
 
+	/**
+	 * 根据意图识别结果决定下一跳。
+	 *
+	 * 如果模型把输入识别为闲聊或无关指令，则直接结束流程；
+	 * 否则继续进入证据召回阶段。
+	 */
 	@Override
 	public String apply(OverAllState state) throws Exception {
-		// 获取意图识别结果
 		IntentRecognitionOutputDTO intentResult = StateUtil.getObjectValue(state, INTENT_RECOGNITION_NODE_OUTPUT,
 				IntentRecognitionOutputDTO.class);
 
@@ -45,7 +58,7 @@ public class IntentRecognitionDispatcher implements EdgeAction {
 
 		String classification = intentResult.getClassification();
 
-		// 根据分类结果决定下一个节点
+		// 这里依赖提示词输出协议：识别结果为“《闲聊或无关指令》”时直接结束分析链路。
 		if ("《闲聊或无关指令》".equals(classification)) {
 			log.warn("Intent classified as chat or irrelevant, ending conversation");
 			return END;

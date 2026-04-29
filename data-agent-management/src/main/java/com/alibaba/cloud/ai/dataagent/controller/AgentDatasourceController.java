@@ -84,7 +84,11 @@ public class AgentDatasourceController {
 		}
 	}
 
-	/** Get list of data sources configured for agent */
+	/**
+ * `getAgentDatasource`：读取当前场景所需的数据或状态。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体数据源相关结果。
+ */
 	@GetMapping
 	public ApiResponse<List<AgentDatasource>> getAgentDatasource(@PathVariable Long agentId) {
 		try {
@@ -112,7 +116,11 @@ public class AgentDatasourceController {
 		}
 	}
 
-	/** Add data source for agent */
+	/**
+ * `addDatasourceToAgent`：创建新的业务对象或新记录。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体数据源相关结果。
+ */
 	@PostMapping("/{datasourceId}")
 	public ApiResponse<AgentDatasource> addDatasourceToAgent(@PathVariable Long agentId,
 			@PathVariable Integer datasourceId) {
@@ -144,7 +152,11 @@ public class AgentDatasourceController {
 		}
 	}
 
-	/** Remove data source association from agent */
+	/**
+ * `removeDatasourceFromAgent`：删除对象、解绑关系，或清理不再需要的数据。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体数据源相关结果。
+ */
 	@DeleteMapping("/{datasourceId}")
 	public ApiResponse<?> removeDatasourceFromAgent(@PathVariable Long agentId, @PathVariable Integer datasourceId) {
 		try {
@@ -156,7 +168,11 @@ public class AgentDatasourceController {
 		}
 	}
 
-	/** 启用/禁用智能体的数据源 */
+	/**
+ * `toggleDatasourceForAgent`：更新已有对象的字段、状态或开关配置。
+ *
+ * 这是接口入口方法，参数通常来自 HTTP 请求，返回值会直接影响前端收到的智能体数据源相关结果。
+ */
 	@PutMapping("/toggle")
 	public ApiResponse<AgentDatasource> toggleDatasourceForAgent(@PathVariable Long agentId,
 			@RequestBody ToggleDatasourceDTO dto) {
